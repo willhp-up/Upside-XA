@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UPSIDE — Model Analyst Command Centre</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+:root{--bg0:#04060a;--bg1:#090c14;--bg2:#0e1220;--bg3:#161c2e;--bg4:#1e2640;--fg:#e4e8f4;--fg2:#b4bcd4;--fg3:#7580a0;--fg4:#4a5270;--border:rgba(120,140,200,.08);--border2:rgba(120,140,200,.16);--g:#00e676;--g2:#69f0ae;--r:#ff3d71;--y:#ffc107;--b:#40c4ff;--p:#b388ff;--sidebar-w:240px;--mono:'JetBrains Mono','Fira Code','Consolas',monospace;--sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;--serif:'Instrument Serif',Georgia,serif}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}html,body,#root{height:100%}
+body{background:var(--bg0);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:2px}
+input,textarea,select{font-family:inherit}input:focus,textarea:focus,select:focus{outline:none;border-color:var(--g)!important}button{font-family:inherit}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useMemo,useCallback,useEffect,useRef}=React;
+
+/* ═══════════════ STORAGE & CSV ═══════════════ */
+const LS={get(k){try{return JSON.parse(localStorage.getItem(k))}catch{return null}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
+function parseCSV(text){
+  const lines=text.trim().split('\n');if(lines.length<2)return[];
+  const parseRow=line=>{const r=[];let c='',q=false;for(let i=0;i<line.length;i++){const ch=line[i];if(ch==='"')q=!q;else if(ch===','&&!q){r.push(c.trim());c=''}else c+=ch}r.push(c.trim());return r};
+  const headers=parseRow(lines[0]).map(h=>h.toLowerCase().replace(/\s+/g,'_'));
+  return lines.slice(1).filter(l=>l.trim()).map(line=>{const vals=parseRow(line);const obj={};headers.forEach((h,i)=>{obj[h]=vals[i]||''});return obj});
+}
+function csvRowToStock(row,driverIds){
+  return{ticker:row.ticker||'',bbg:row.bbg_ticker||row.bbg||'',name:row.name||row.company||'',sector:row.sector||'',
+    verdict:(row.verdict||'long').toLowerCase(),tier:(row.tier||'watchlist').toLowerCase(),thesis:row.thesis||'',
+    scores:Object.fromEntries(driverIds.map(d=>[d,parseInt(row[d]||'5')||5])),
+    metrics:{px_last:parseFloat(row.px_last||row.price)||null,chg_ytd:parseFloat(row.chg_ytd||row.ytd)||null,mkt_cap:parseFloat(row.mkt_cap)||null,pe_fwd:parseFloat(row.pe_fwd||row.pe)||null,ev_ebitda:parseFloat(row.ev_ebitda)||null,net_debt_ebitda:parseFloat(row.net_debt_ebitda)||null,oper_margin:parseFloat(row.oper_margin||row.margin)||null,fcf_yield:parseFloat(row.fcf_yield)||null}};
+}
+function stocksToCSV(stocks,modelName,drivers){
+  const did=drivers.map(d=>d.id);
+  const h=['ticker','bbg_ticker','name','sector','verdict','tier','model','thesis','px_last','chg_ytd','mkt_cap','pe_fwd','ev_ebitda','net_debt_ebitda','oper_margin','fcf_yield',...did];
+  let csv=h.join(',')+'\n';
+  stocks.forEach(s=>{const esc=v=>v&&v.includes(',')?`"${v.replace(/"/g,"'")}"`:v||'';
+    csv+=[s.ticker,s.bbg,esc(s.name),s.sector,s.verdict,s.tier,modelName,esc(s.thesis),s.metrics?.px_last??'',s.metrics?.chg_ytd??'',s.metrics?.mkt_cap??'',s.metrics?.pe_fwd??'',s.metrics?.ev_ebitda??'',s.metrics?.net_debt_ebitda??'',s.metrics?.oper_margin??'',s.metrics?.fcf_yield??'',...did.map(d=>s.scores?.[d]??5)].join(',')+'\n'});
+  return csv;
+}
+function allStocksToCSV(models,drivers){
+  const did=drivers.map(d=>d.id);
+  const h=['ticker','bbg_ticker','name','sector','verdict','tier','model','team','thesis','px_last','chg_ytd','mkt_cap','pe_fwd','ev_ebitda','net_debt_ebitda','oper_margin','fcf_yield',...did];
+  let csv=h.join(',')+'\n';
+  models.forEach(m=>{(m.stocks||[]).forEach(s=>{const esc=v=>v&&v.includes(',')?`"${v.replace(/"/g,"'")}"`:v||'';
+    csv+=[s.ticker,s.bbg,esc(s.name),s.sector,s.verdict,s.tier,m.name,m.teamId,esc(s.thesis),s.metrics?.px_last??'',s.metrics?.chg_ytd??'',s.metrics?.mkt_cap??'',s.metrics?.pe_fwd??'',s.metrics?.ev_ebitda??'',s.metrics?.net_debt_ebitda??'',s.metrics?.oper_margin??'',s.metrics?.fcf_yield??'',...did.map(d=>s.scores?.[d]??5)].join(',')+'\n'})});
+  return csv;
+}
+function download(content,filename,mime='text/csv'){const b=new Blob([content],{type:mime});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u)}
+
+/* ═══════════════ FORMATTING ═══════════════ */
+const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;if(t==='cap')return v>=1000?`$${(v/1000).toFixed(1)}B`:`$${v.toFixed(0)}M`;return`${v.toFixed(1)}`};
+const debtLabel=v=>{if(!v&&v!==0)return'—';return v<1?'Low':v<2.5?'Mod':v<4?'High':'V.High'};
+const debtColor=v=>{if(!v&&v!==0)return'var(--fg4)';return v<1?'var(--g)':v<2.5?'var(--fg2)':v<4?'var(--y)':'var(--r)'};
+const comp=(stock,drivers)=>{const a=drivers.filter(d=>d.active);const tw=a.reduce((s,d)=>s+d.weight,0);return tw>0?a.reduce((s,d)=>s+(stock.scores[d.id]||5)*d.weight,0)/tw:5};
+
+/* ═══════════════ DEFAULT DATA ═══════════════ */
+const DEFAULT_MACRO={
+  drivers:[
+    {id:"kshape",label:"K-Shape Divergence",weight:30,description:"Structural wealth gap: premium resilience vs budget collapse",active:true},
+    {id:"oil",label:"Oil Price Trajectory",weight:15,description:"Crude direction impacts carrier margins",active:true},
+    {id:"capex",label:"Fleet & Capex Cycle",weight:20,description:"Capital intensity and fleet age dynamics",active:true},
+    {id:"btravel",label:"Business Travel Shift",weight:20,description:"Corporate spend recomposition toward premium",active:true},
+    {id:"premium",label:"Premiumisation",weight:15,description:"Quality-over-quantity structural trend",active:true},
+  ],
+  tiers:[{id:"core",name:"Core",color:"#00e676"},{id:"satellite",name:"Satellite",color:"#40c4ff"},{id:"watchlist",name:"Watchlist",color:"#ffc107"}],
+};
+const DEFAULT_TEAMS=[
+  {id:"travel",name:"Travel",color:"#00e676",icon:"✈"},
+  {id:"defence",name:"Defence",color:"#40c4ff",icon:"🛡"},
+  {id:"tech",name:"Tech & Robotics",color:"#b388ff",icon:"🤖"},
+];
+const TIG_STOCKS=[
+  {ticker:"IAG.L",bbg:"IAG LN Equity",name:"IAG (BA/Iberia/Vueling)",sector:"Short-Haul Airlines",verdict:"long",tier:"core",scores:{kshape:8,oil:7,capex:6,btravel:9,premium:8},thesis:"BA captures premium business short-haul. Multi-brand covers premium and mid-tier, avoids the bottom.",metrics:{px_last:245.8,chg_ytd:24.1,mkt_cap:12200,pe_fwd:6.8,ev_ebitda:4.1,net_debt_ebitda:1.8,oper_margin:12.4,fcf_yield:11.2}},
+  {ticker:"NAS.OL",bbg:"NAS NO Equity",name:"Norwegian Air Shuttle",sector:"Short-Haul Airlines",verdict:"long",tier:"satellite",scores:{kshape:7,oil:6,capex:8,btravel:7,premium:6},thesis:"Mid-market sweet spot. Clean balance sheet. Young fleet.",metrics:{px_last:12.45,chg_ytd:18.2,mkt_cap:1850,pe_fwd:12.4,ev_ebitda:6.2,net_debt_ebitda:0.8,oper_margin:8.1,fcf_yield:6.3}},
+  {ticker:"EZJ.L",bbg:"EZJ LN Equity",name:"easyJet",sector:"Short-Haul Airlines",verdict:"long",tier:"satellite",scores:{kshape:6,oil:7,capex:7,btravel:6,premium:5},thesis:"easyJet Plus gives K-shape resilience. Strong primary airport slots.",metrics:{px_last:584.2,chg_ytd:12.8,mkt_cap:4350,pe_fwd:9.1,ev_ebitda:5.4,net_debt_ebitda:1.5,oper_margin:7.2,fcf_yield:7.8}},
+  {ticker:"WIZZ.L",bbg:"WIZZ LN Equity",name:"Wizz Air",sector:"Short-Haul Airlines",verdict:"short",tier:"core",scores:{kshape:2,oil:5,capex:4,btravel:2,premium:2},thesis:"ULCC model structurally challenged. CEE low-income most exposed.",metrics:{px_last:1842,chg_ytd:-8.4,mkt_cap:1890,pe_fwd:18.2,ev_ebitda:8.1,net_debt_ebitda:3.8,oper_margin:3.4,fcf_yield:1.2}},
+  {ticker:"RYA.L",bbg:"RYA ID Equity",name:"Ryanair",sector:"Short-Haul Airlines",verdict:"short",tier:"satellite",scores:{kshape:3,oil:8,capex:7,btravel:2,premium:1},thesis:"Operational excellence but ULCC faces secular headwinds.",metrics:{px_last:18.92,chg_ytd:-2.1,mkt_cap:21500,pe_fwd:11.5,ev_ebitda:6.8,net_debt_ebitda:0.4,oper_margin:14.1,fcf_yield:8.5}},
+  {ticker:"TUR.ST",bbg:"THYAO TI Equity",name:"Turkish Airlines",sector:"Long-Haul Airlines",verdict:"long",tier:"core",scores:{kshape:7,oil:7,capex:8,btravel:7,premium:7},thesis:"Istanbul hub geographic sweet spot. Massive fleet renewal.",metrics:{px_last:284.5,chg_ytd:32.4,mkt_cap:9800,pe_fwd:5.8,ev_ebitda:4.5,net_debt_ebitda:1.2,oper_margin:15.2,fcf_yield:12.8}},
+  {ticker:"QAN.AX",bbg:"QAN AU Equity",name:"Qantas",sector:"Long-Haul Airlines",verdict:"long",tier:"core",scores:{kshape:7,oil:6,capex:7,btravel:8,premium:8},thesis:"Project Sunrise premium ultra-long-haul. Loyalty is profit engine.",metrics:{px_last:8.95,chg_ytd:15.6,mkt_cap:11200,pe_fwd:10.2,ev_ebitda:5.1,net_debt_ebitda:1.4,oper_margin:11.3,fcf_yield:9.1}},
+  {ticker:"AF.PA",bbg:"AF FP Equity",name:"Air France-KLM",sector:"Long-Haul Airlines",verdict:"short",tier:"core",scores:{kshape:4,oil:5,capex:3,btravel:5,premium:4},thesis:"Ageing fleet, high labour costs, state interference.",metrics:{px_last:8.42,chg_ytd:-12.3,mkt_cap:2450,pe_fwd:4.2,ev_ebitda:3.2,net_debt_ebitda:4.2,oper_margin:4.8,fcf_yield:3.1}},
+  {ticker:"LHA.DE",bbg:"LHA GR Equity",name:"Lufthansa Group",sector:"Long-Haul Airlines",verdict:"short",tier:"satellite",scores:{kshape:5,oil:5,capex:4,btravel:6,premium:5},thesis:"ITA adds complexity. Fleet renewal behind schedule.",metrics:{px_last:6.18,chg_ytd:-5.8,mkt_cap:7400,pe_fwd:5.1,ev_ebitda:3.8,net_debt_ebitda:2.8,oper_margin:5.2,fcf_yield:4.2}},
+  {ticker:"MAR",bbg:"MAR US Equity",name:"Marriott International",sector:"Hotels & Lodging",verdict:"long",tier:"core",scores:{kshape:8,oil:4,capex:8,btravel:8,premium:9},thesis:"Asset-light with dominant loyalty. Ritz to Courtyard — K-shape proof.",metrics:{px_last:278.4,chg_ytd:8.2,mkt_cap:78500,pe_fwd:22.1,ev_ebitda:18.2,net_debt_ebitda:0.3,oper_margin:16.8,fcf_yield:4.8}},
+  {ticker:"IHG.L",bbg:"IHG LN Equity",name:"IHG",sector:"Hotels & Lodging",verdict:"long",tier:"satellite",scores:{kshape:7,oil:4,capex:7,btravel:7,premium:7},thesis:"Six Senses, Regent luxury. Holiday Inn mid-tier resilient.",metrics:{px_last:8450,chg_ytd:6.4,mkt_cap:14800,pe_fwd:19.4,ev_ebitda:14.1,net_debt_ebitda:0.5,oper_margin:14.2,fcf_yield:5.2}},
+  {ticker:"WH",bbg:"WH US Equity",name:"Wyndham Hotels",sector:"Hotels & Lodging",verdict:"short",tier:"satellite",scores:{kshape:2,oil:3,capex:5,btravel:2,premium:1},thesis:"Budget-focused. Direct K-shape loser.",metrics:{px_last:82.1,chg_ytd:-4.2,mkt_cap:5800,pe_fwd:17.8,ev_ebitda:12.4,net_debt_ebitda:2.1,oper_margin:11.5,fcf_yield:5.8}},
+  {ticker:"BKNG",bbg:"BKNG US Equity",name:"Booking Holdings",sector:"Ancillary / OTAs",verdict:"long",tier:"satellite",scores:{kshape:7,oil:4,capex:8,btravel:7,premium:6},thesis:"Platform captures both ends. Massive FCF.",metrics:{px_last:4820,chg_ytd:14.5,mkt_cap:158000,pe_fwd:25.3,ev_ebitda:19.2,net_debt_ebitda:0.2,oper_margin:32.1,fcf_yield:3.8}},
+  {ticker:"ZUR.SW",bbg:"FHZN SW Equity",name:"Flughafen Zürich",sector:"Airports & Infra",verdict:"long",tier:"core",scores:{kshape:8,oil:4,capex:7,btravel:8,premium:9},thesis:"Best-in-class experience. Premium positioning.",metrics:{px_last:212.4,chg_ytd:11.2,mkt_cap:6500,pe_fwd:20.1,ev_ebitda:12.8,net_debt_ebitda:0.8,oper_margin:28.3,fcf_yield:4.1}},
+  {ticker:"FRA.DE",bbg:"FRA GR Equity",name:"Fraport",sector:"Airports & Infra",verdict:"short",tier:"satellite",scores:{kshape:4,oil:3,capex:2,btravel:5,premium:3},thesis:"Massive capex for T3. Ageing infra. Debt burden.",metrics:{px_last:52.8,chg_ytd:-6.8,mkt_cap:4900,pe_fwd:14.2,ev_ebitda:8.4,net_debt_ebitda:3.4,oper_margin:18.1,fcf_yield:2.8}},
+];
+const DEFAULT_MODELS=[{id:"tig",name:"Tig",teamId:"travel",type:"internal",description:"K-shape travel divergence model. ULCC shorts vs premium longs.",created:"2025-02-16",stocks:TIG_STOCKS}];
+
+/* ═══════════════ MICRO COMPONENTS ═══════════════ */
+function Badge({children,color,small,style:sx}){return<span style={{display:'inline-flex',alignItems:'center',padding:small?'1px 6px':'2px 8px',borderRadius:3,fontSize:small?9:10,fontWeight:700,fontFamily:'var(--mono)',letterSpacing:'.04em',background:`${color}15`,color,border:`1px solid ${color}35`,...sx}}>{children}</span>}
+function Btn({children,onClick,active,color,style:sx,...p}){const c=color||'var(--fg3)';return<button onClick={onClick} style={{padding:'6px 12px',borderRadius:4,cursor:'pointer',fontSize:11,fontFamily:'var(--mono)',fontWeight:600,transition:'all .15s',border:`1px solid ${active?c+'60':'var(--border)'}`,background:active?c+'12':'transparent',color:active?c:'var(--fg4)',...sx}} {...p}>{children}</button>}
+function Label({children,right}){return<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><span style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em'}}>{children}</span>{right}</div>}
+function ScoreBar({score,w=48}){const c=score>=7?'var(--g)':score>=5?'var(--y)':'var(--r)';return<div style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:w,height:3,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}><div style={{width:`${score*10}%`,height:'100%',background:c,borderRadius:2,transition:'width .4s'}}/></div><span style={{fontSize:10,color:c,fontFamily:'var(--mono)',fontWeight:600,width:14}}>{score}</span></div>}
+
+/* ═══════════════ SIDEBAR ═══════════════ */
+function Sidebar({teams,models,selected,onSelect,onNewModel,onNewTeam}){
+  const grouped=useMemo(()=>{const g={};teams.forEach(t=>g[t.id]=[]);models.forEach(m=>{if(g[m.teamId])g[m.teamId].push(m)});return g},[teams,models]);
+  const NavItem=({active,color,icon,label,count,onClick})=><div onClick={onClick} style={{padding:'9px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:8,fontSize:12,fontWeight:600,color:active?'var(--fg)':'var(--fg3)',background:active?'var(--bg2)':'transparent',borderLeft:active?`3px solid ${color||'var(--g)'}`:'3px solid transparent',transition:'all .12s'}}>{icon&&<span style={{fontSize:13,width:16,textAlign:'center'}}>{icon}</span>}<span style={{fontFamily:'var(--mono)',flex:1}}>{label}</span>{count!==undefined&&<span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{count}</span>}</div>;
+
+  return<div style={{width:'var(--sidebar-w)',background:'var(--bg1)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',height:'100vh',flexShrink:0}}>
+    <div style={{padding:'16px 16px 12px',borderBottom:'1px solid var(--border)'}}>
+      <div style={{fontSize:22,fontFamily:'var(--mono)',fontWeight:700,color:'var(--g)',letterSpacing:'-.02em'}}>UPSIDE</div>
+      <div style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)',marginTop:1}}>Model Analyst Command Centre</div>
+    </div>
+    <div style={{flex:1,overflowY:'auto',padding:'8px 0'}}>
+      <NavItem active={selected.type==='overview'} color="var(--g)" icon="◉" label="Overview" onClick={()=>onSelect({type:'overview'})}/>
+      <NavItem active={selected.type==='macro'} color="var(--y)" icon="⚙" label="Macro Env" onClick={()=>onSelect({type:'macro'})}/>
+      <NavItem active={selected.type==='export'} color="var(--b)" icon="↓" label="Export Centre" onClick={()=>onSelect({type:'export'})}/>
+      <div style={{height:1,background:'var(--border)',margin:'8px 16px'}}/>
+      {teams.map(team=><div key={team.id}>
+        <NavItem active={selected.type==='team'&&selected.id===team.id} color={team.color} icon={team.icon} label={team.name} count={(grouped[team.id]||[]).length} onClick={()=>onSelect({type:'team',id:team.id})}/>
+        {(grouped[team.id]||[]).map(m=><div key={m.id} onClick={()=>onSelect({type:'model',id:m.id})} style={{padding:'7px 16px 7px 40px',cursor:'pointer',fontSize:11,fontFamily:'var(--mono)',color:selected.type==='model'&&selected.id===m.id?'var(--fg)':'var(--fg4)',background:selected.type==='model'&&selected.id===m.id?'var(--bg2)':'transparent',borderLeft:selected.type==='model'&&selected.id===m.id?`3px solid ${team.color}`:'3px solid transparent',transition:'all .1s'}}>{m.type==='imported'?'↓ ':'● '}{m.name}<span style={{marginLeft:6,fontSize:9,color:'var(--fg4)'}}>{(m.stocks||[]).length}</span></div>)}
+      </div>)}
+    </div>
+    <div style={{padding:12,borderTop:'1px solid var(--border)',display:'flex',gap:6}}>
+      <Btn onClick={onNewModel} active color="var(--g)" style={{flex:1,fontSize:10}}>+ Model</Btn>
+      <Btn onClick={onNewTeam} style={{fontSize:10}}>+ Team</Btn>
+    </div>
+  </div>;
+}
+
+/* ═══════════════ VIEW: OVERVIEW ═══════════════ */
+function OverviewView({teams,models,macro,onSelect}){
+  const totalS=models.reduce((a,m)=>a+(m.stocks||[]).length,0);
+  const totalL=models.reduce((a,m)=>a+(m.stocks||[]).filter(s=>s.verdict==='long').length,0);
+  return<div style={{padding:28,animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:28}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--fg)',fontWeight:400,marginBottom:4}}>Command Centre</h1>
+      <p style={{fontSize:13,color:'var(--fg3)'}}>Managing {models.length} model{models.length!==1?'s':''} across {teams.length} team{teams.length!==1?'s':''}</p>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:28}}>
+      {[['Models',models.length,'var(--fg)'],['Total Names',totalS,'var(--b)'],['Longs',totalL,'var(--g)'],['Shorts',totalS-totalL,'var(--r)']].map(([l,v,c])=>
+        <div key={l} style={{padding:'16px 18px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
+          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>{l}</div>
+          <div style={{fontSize:28,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
+        </div>
+      )}
+    </div>
+    <Label>Teams</Label>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12}}>
+      {teams.map(team=>{const tm=models.filter(m=>m.teamId===team.id);const ts=tm.reduce((a,m)=>a+(m.stocks||[]).length,0);const tl=tm.reduce((a,m)=>a+(m.stocks||[]).filter(s=>s.verdict==='long').length,0);
+        return<div key={team.id} onClick={()=>onSelect({type:'team',id:team.id})} style={{padding:18,background:'var(--bg2)',border:`1px solid ${team.color}20`,borderRadius:8,cursor:'pointer',transition:'all .15s'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><span style={{fontSize:18}}>{team.icon}</span><span style={{fontSize:15,fontWeight:600,color:team.color}}>{team.name}</span></div>
+            <span style={{fontSize:11,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{tm.length} model{tm.length!==1?'s':''}</span>
+          </div>
+          <div style={{display:'flex',gap:16,fontSize:11,fontFamily:'var(--mono)'}}>
+            <span style={{color:'var(--fg3)'}}>{ts} names</span><span style={{color:'var(--g)'}}>{tl}L</span><span style={{color:'var(--r)'}}>{ts-tl}S</span>
+          </div>
+          <div style={{marginTop:10,display:'flex',flexWrap:'wrap',gap:4}}>{tm.map(m=><Badge key={m.id} color={team.color} small>{m.name}</Badge>)}</div>
+        </div>})}
+    </div>
+  </div>;
+}
+
+/* ═══════════════ VIEW: TEAM ═══════════════ */
+function TeamView({team,models:all,macro,onSelect,setModels}){
+  const tm=all.filter(m=>m.teamId===team.id);
+  return<div style={{padding:28,animation:'fadeIn .3s ease'}}>
+    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
+      <span style={{fontSize:28}}>{team.icon}</span>
+      <div><h1 style={{fontSize:24,fontFamily:'var(--serif)',color:team.color,fontWeight:400}}>{team.name}</h1>
+        <p style={{fontSize:12,color:'var(--fg3)',fontFamily:'var(--mono)'}}>{tm.length} model{tm.length!==1?'s':''}</p></div>
+    </div>
+    {tm.length===0&&<div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontFamily:'var(--mono)'}}>No models in this team yet.</div>}
+    {tm.map(m=>{const stocks=m.stocks||[];const longs=stocks.filter(s=>s.verdict==='long');
+      return<div key={m.id} style={{marginBottom:16,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+        <div onClick={()=>onSelect({type:'model',id:m.id})} style={{padding:'14px 18px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:'1px solid var(--border)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)'}}>{m.name}</span>
+            <Badge color={m.type==='internal'?'var(--g)':'var(--b)'} small>{m.type==='internal'?'Built':'Imported'}</Badge>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:14,fontSize:12,fontFamily:'var(--mono)'}}>
+            <span style={{color:'var(--fg3)'}}>{stocks.length} names</span>
+            <span style={{color:'var(--g)',fontWeight:700}}>{longs.length}L</span>
+            <span style={{color:'var(--r)',fontWeight:700}}>{stocks.length-longs.length}S</span>
+            <span style={{color:'var(--fg4)',fontSize:16}}>→</span>
+          </div>
+        </div>
+        {stocks.length>0&&<div style={{padding:'8px 18px 12px'}}>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {stocks.sort((a,b)=>comp(b,macro.drivers)-comp(a,macro.drivers)).slice(0,8).map(s=>{const sc=comp(s,macro.drivers);return(
+              <div key={s.ticker} style={{padding:'4px 10px',background:'var(--bg3)',borderRadius:4,border:`1px solid ${s.verdict==='long'?'var(--g)':'var(--r)'}15`,display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontSize:10,color:s.verdict==='long'?'var(--g)':'var(--r)',fontFamily:'var(--mono)',fontWeight:700}}>{s.verdict==='long'?'▲':'▼'}</span>
+                <span style={{fontSize:11,fontFamily:'var(--mono)',color:'var(--fg2)'}}>{s.ticker}</span>
+                <span style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:sc>=7?'var(--g)':sc>=5?'var(--y)':'var(--r)'}}>{sc.toFixed(1)}</span>
+              </div>)})}
+          </div>
+        </div>}
+      </div>})}
+  </div>;
+}
+
+/* ═══════════════ VIEW: MODEL DRILLDOWN ═══════════════ */
+function ModelView({model,setModels,teams,macro}){
+  const[tab,setTab]=useState('list');const[expanded,setExpanded]=useState(null);
+  const[sortCol,setSortCol]=useState('composite');const[sortDir,setSortDir]=useState('desc');
+  const[filterV,setFilterV]=useState('all');const[csvText,setCsvText]=useState('');
+  const[preview,setPreview]=useState(null);const[selectedStock,setSelectedStock]=useState(null);
+  const[editingName,setEditingName]=useState(false);const[nameVal,setNameVal]=useState(model.name);
+  const fileRef=useRef(null);
+  useEffect(()=>{setNameVal(model.name);setSelectedStock(null)},[model.id]);
+  const team=teams.find(t=>t.id===model.teamId);const stocks=model.stocks||[];
+  const drivers=macro.drivers.filter(d=>d.active);
+  const updateModel=fn=>setModels(p=>p.map(m=>m.id===model.id?fn(m):m));
+  const updateStock=(ticker,fn)=>updateModel(m=>({...m,stocks:(m.stocks||[]).map(s=>s.ticker===ticker?fn(s):s)}));
+  const removeStock=ticker=>updateModel(m=>({...m,stocks:(m.stocks||[]).filter(s=>s.ticker!==ticker)}));
+  const handleAddTicker=ticker=>{if(!ticker.trim())return;const did=macro.drivers.map(d=>d.id);
+    updateModel(m=>({...m,stocks:[...(m.stocks||[]),{ticker:ticker.toUpperCase().trim(),bbg:'',name:ticker.toUpperCase().trim(),sector:'',verdict:'long',tier:'watchlist',scores:Object.fromEntries(did.map(d=>[d,5])),thesis:'',metrics:{}}]}))};
+  const saveName=()=>{updateModel(m=>({...m,name:nameVal}));setEditingName(false)};
+
+  const sorted=useMemo(()=>{
+    let r=stocks.map(s=>({...s,_comp:comp(s,macro.drivers)}));
+    if(filterV!=='all')r=r.filter(s=>s.verdict===filterV);
+    const d=sortDir==='desc'?-1:1;
+    r.sort((a,b)=>{if(sortCol==='composite')return(b._comp-a._comp)*d;if(sortCol==='ticker')return a.ticker.localeCompare(b.ticker)*d;
+      if(sortCol==='pe')return((a.metrics?.pe_fwd||99)-(b.metrics?.pe_fwd||99))*d;if(sortCol==='ytd')return((b.metrics?.chg_ytd||0)-(a.metrics?.chg_ytd||0))*d;
+      if(sortCol==='margin')return((b.metrics?.oper_margin||0)-(a.metrics?.oper_margin||0))*d;return 0});return r;
+  },[stocks,macro,filterV,sortCol,sortDir]);
+
+  const toggleSort=col=>{if(sortCol===col)setSortDir(d=>d==='desc'?'asc':'desc');else{setSortCol(col);setSortDir('desc')}};
+  const SH=({col,children,align})=><th onClick={()=>toggleSort(col)} style={{padding:'8px 10px',textAlign:align||'left',fontSize:10,fontFamily:'var(--mono)',color:sortCol===col?'var(--g)':'var(--fg4)',textTransform:'uppercase',letterSpacing:'.04em',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap',userSelect:'none'}}>{children}{sortCol===col?(sortDir==='desc'?' ↓':' ↑'):''}</th>;
+
+  const handleImport=()=>{const parsed=parseCSV(csvText);if(parsed.length){setPreview(parsed.map(r=>csvRowToStock(r,macro.drivers.map(d=>d.id))))}};
+  const confirmImport=mode=>{if(!preview)return;if(mode==='replace')updateModel(m=>({...m,stocks:preview,type:'imported'}));
+    else{const ex=new Set(stocks.map(s=>s.ticker));updateModel(m=>({...m,stocks:[...m.stocks,...preview.filter(s=>!ex.has(s.ticker))]}))}setPreview(null);setCsvText('')};
+  const handleExport=()=>download(stocksToCSV(stocks,model.name,macro.drivers),`upside_${model.name.toLowerCase()}_${new Date().toISOString().slice(0,10)}.csv`);
+  const handleFile=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setCsvText(ev.target.result);r.readAsText(f)};
+  const scoreStock=selectedStock?stocks.find(s=>s.ticker===selectedStock):null;
+
+  return<div style={{animation:'fadeIn .3s ease',height:'100vh',display:'flex',flexDirection:'column'}}>
+    {/* Model header */}
+    <div style={{padding:'14px 24px',borderBottom:'1px solid var(--border)',background:'var(--bg1)',flexShrink:0}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          {team&&<span style={{fontSize:16}}>{team.icon}</span>}
+          {editingName?<input value={nameVal} onChange={e=>setNameVal(e.target.value)} onBlur={saveName} onKeyDown={e=>e.key==='Enter'&&saveName()} autoFocus style={{fontSize:20,fontFamily:'var(--mono)',fontWeight:700,background:'var(--bg2)',border:'1px solid var(--g)',borderRadius:4,padding:'2px 8px',color:'var(--fg)',width:200}}/>
+            :<span onClick={()=>setEditingName(true)} style={{fontSize:20,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)',cursor:'pointer'}}>{model.name}</span>}
+          <Badge color={model.type==='internal'?'var(--g)':'var(--b)'}>{model.type==='internal'?'Built':'Imported'}</Badge>
+          <select value={model.teamId||''} onChange={e=>updateModel(m=>({...m,teamId:e.target.value}))} style={{fontSize:10,fontFamily:'var(--mono)',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:3,padding:'3px 6px',color:'var(--fg3)',cursor:'pointer'}}>
+            {teams.map(t=><option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
+          </select>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:12,fontSize:12,fontFamily:'var(--mono)'}}>
+          <span style={{color:'var(--fg3)'}}>{stocks.length} names</span>
+          <span style={{color:'var(--g)',fontWeight:700}}>{stocks.filter(s=>s.verdict==='long').length}L</span>
+          <span style={{color:'var(--r)',fontWeight:700}}>{stocks.filter(s=>s.verdict==='short').length}S</span>
+        </div>
+      </div>
+      <div style={{display:'flex',gap:4,marginTop:10}}>
+        {[['list','Conviction List'],['scorecard','Scorecard'],['import','Import / CSV']].map(([id,label])=>
+          <Btn key={id} active={tab===id} color="var(--fg2)" onClick={()=>setTab(id)}>{label}</Btn>)}
+      </div>
+    </div>
+
+    <div style={{flex:1,overflowY:'auto'}}>
+    {/* ─── CONVICTION LIST ─── */}
+    {tab==='list'&&<div style={{padding:20}}>
+      <div style={{display:'flex',gap:4,marginBottom:12}}>
+        {[['all','All'],['long','▲ Longs'],['short','▼ Shorts']].map(([v,l])=><Btn key={v} active={filterV===v} color="var(--fg2)" onClick={()=>setFilterV(v)}>{l}</Btn>)}
+      </div>
+      <div style={{borderRadius:6,overflow:'hidden',border:'1px solid var(--border)'}}>
+        <table style={{width:'100%',borderCollapse:'collapse'}}>
+          <thead><tr style={{background:'var(--bg3)'}}>
+            <th style={{width:30,padding:'8px 6px'}}></th>
+            <SH col="ticker">Ticker</SH>
+            <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600}}>Name</th>
+            <th style={{padding:'8px 10px',textAlign:'center',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600}}>Call</th>
+            <th style={{padding:'8px 10px',textAlign:'center',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600}}>Tier</th>
+            <SH col="composite" align="center">Score</SH>
+            <SH col="pe" align="right">P/E</SH>
+            <th style={{padding:'8px 10px',textAlign:'right',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600}}>Debt</th>
+            <SH col="margin" align="right">Margin</SH>
+            <SH col="ytd" align="right">YTD</SH>
+            <th style={{padding:'8px 10px',textAlign:'right',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600}}>Mkt Cap</th>
+            <th style={{width:30}}></th>
+          </tr></thead>
+          <tbody>{sorted.map((s,i)=>{const tierObj=macro.tiers.find(t=>t.id===s.tier);const isExp=expanded===s.ticker;
+            return<React.Fragment key={s.ticker}>
+              <tr onClick={()=>setExpanded(isExp?null:s.ticker)} style={{borderBottom:isExp?'none':'1px solid var(--bg3)',cursor:'pointer',background:isExp?'var(--bg2)':'transparent'}}>
+                <td style={{padding:'7px 6px',textAlign:'center',fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{i+1}</td>
+                <td style={{padding:'7px 10px',fontFamily:'var(--mono)',fontWeight:700,fontSize:12,color:'var(--fg)'}}>{s.ticker}</td>
+                <td style={{padding:'7px 10px',fontSize:12,color:'var(--fg2)'}}>{s.name}</td>
+                <td style={{padding:'7px 10px',textAlign:'center'}}><Badge color={s.verdict==='long'?'var(--g)':'var(--r)'} small>{s.verdict==='long'?'▲ L':'▼ S'}</Badge></td>
+                <td style={{padding:'7px 10px',textAlign:'center'}}>{tierObj&&<span style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:600,color:tierObj.color}}>{tierObj.name}</span>}</td>
+                <td style={{padding:'7px 10px',textAlign:'center'}}><span style={{fontSize:15,fontFamily:'var(--mono)',fontWeight:700,color:s._comp>=7?'var(--g)':s._comp>=5?'var(--y)':'var(--r)'}}>{s._comp.toFixed(1)}</span></td>
+                <td style={{padding:'7px 10px',textAlign:'right',fontFamily:'var(--mono)',fontSize:11,color:'var(--fg2)'}}>{fmt(s.metrics?.pe_fwd,'ratio')}</td>
+                <td style={{padding:'7px 10px',textAlign:'right',fontFamily:'var(--mono)',fontSize:11,color:debtColor(s.metrics?.net_debt_ebitda)}}>{debtLabel(s.metrics?.net_debt_ebitda)}</td>
+                <td style={{padding:'7px 10px',textAlign:'right',fontFamily:'var(--mono)',fontSize:11,color:'var(--fg2)'}}>{fmt(s.metrics?.oper_margin,'pct')}</td>
+                <td style={{padding:'7px 10px',textAlign:'right',fontFamily:'var(--mono)',fontSize:11,color:(s.metrics?.chg_ytd||0)>=0?'var(--g)':'var(--r)'}}>{fmt(s.metrics?.chg_ytd,'pct')}</td>
+                <td style={{padding:'7px 10px',textAlign:'right',fontFamily:'var(--mono)',fontSize:11,color:'var(--fg2)'}}>{fmt(s.metrics?.mkt_cap,'cap')}</td>
+                <td style={{padding:'7px 4px',textAlign:'center'}}><button onClick={e=>{e.stopPropagation();setSelectedStock(s.ticker);setTab('scorecard')}} style={{background:'transparent',border:'none',color:'var(--fg4)',cursor:'pointer',fontSize:12}}>✎</button></td>
+              </tr>
+              {isExp&&<tr style={{background:'var(--bg2)',borderBottom:'1px solid var(--bg3)'}}>
+                <td colSpan={12} style={{padding:'12px 20px 14px 44px'}}>
+                  <div style={{fontSize:12,color:'var(--fg3)',lineHeight:1.8,marginBottom:10}}>{s.thesis||'No thesis.'}</div>
+                  <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
+                    {drivers.map(d=><div key={d.id}><div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',marginBottom:3}}>{d.label.split(' ').slice(0,2).join(' ')} ({d.weight}%)</div><ScoreBar score={s.scores[d.id]||5} w={44}/></div>)}
+                  </div>
+                </td>
+              </tr>}
+            </React.Fragment>})}</tbody>
+        </table>
+      </div>
+      {sorted.length===0&&<div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontFamily:'var(--mono)'}}>No stocks match filters</div>}
+    </div>}
+
+    {/* ─── SCORECARD ─── */}
+    {tab==='scorecard'&&<div style={{display:'grid',gridTemplateColumns:'180px 1fr',gap:0,height:'100%'}}>
+      <div style={{borderRight:'1px solid var(--border)',overflowY:'auto',padding:'6px 0'}}>
+        {stocks.map(s=>{const sc=comp(s,macro.drivers);return<div key={s.ticker} onClick={()=>setSelectedStock(s.ticker)} style={{padding:'8px 12px',cursor:'pointer',background:s.ticker===selectedStock?'var(--bg2)':'transparent',borderLeft:s.ticker===selectedStock?'3px solid var(--g)':'3px solid transparent'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:s.ticker===selectedStock?'var(--fg)':'var(--fg3)'}}>{s.ticker}</span>
+            <div style={{display:'flex',gap:4,alignItems:'center'}}><span style={{fontSize:9,color:s.verdict==='long'?'var(--g)':'var(--r)'}}>{s.verdict==='long'?'▲':'▼'}</span><span style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:sc>=7?'var(--g)':sc>=5?'var(--y)':'var(--r)'}}>{sc.toFixed(1)}</span></div>
+          </div><div style={{fontSize:9,color:'var(--fg4)',marginTop:1,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{s.name}</div>
+        </div>})}
+        <div style={{padding:'8px 12px'}}><input placeholder="+ Add ticker" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value){handleAddTicker(e.target.value);e.target.value=''}}} style={{width:'100%',padding:'6px 8px',fontSize:10,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--g)30',borderRadius:3,color:'var(--g)'}}/></div>
+      </div>
+      {scoreStock?<div style={{padding:'18px 24px',overflowY:'auto'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:20}}>
+          <div><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:2}}>
+            <span style={{fontSize:22,fontFamily:'var(--mono)',fontWeight:700}}>{scoreStock.ticker}</span>
+            <Badge color={scoreStock.verdict==='long'?'var(--g)':'var(--r)'}>{scoreStock.verdict==='long'?'▲ LONG':'▼ SHORT'}</Badge>
+            {macro.tiers.find(t=>t.id===scoreStock.tier)&&<Badge color={macro.tiers.find(t=>t.id===scoreStock.tier).color}>{macro.tiers.find(t=>t.id===scoreStock.tier).name}</Badge>}
+          </div><div style={{fontSize:13,color:'var(--fg2)'}}>{scoreStock.name}</div></div>
+          <div style={{textAlign:'right'}}><div style={{fontSize:30,fontFamily:'var(--mono)',fontWeight:700,lineHeight:1,color:comp(scoreStock,macro.drivers)>=7?'var(--g)':comp(scoreStock,macro.drivers)>=5?'var(--y)':'var(--r)'}}>{comp(scoreStock,macro.drivers).toFixed(1)}</div><div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',marginTop:2}}>COMPOSITE</div></div>
+        </div>
+        <div style={{display:'flex',gap:12,marginBottom:20,flexWrap:'wrap'}}>
+          <div><Label>Verdict</Label><div style={{display:'flex',gap:4}}>{['long','short'].map(v=><Btn key={v} active={scoreStock.verdict===v} color={v==='long'?'var(--g)':'var(--r)'} onClick={()=>updateStock(scoreStock.ticker,s=>({...s,verdict:v}))}>{v==='long'?'▲ LONG':'▼ SHORT'}</Btn>)}</div></div>
+          <div><Label>Tier</Label><div style={{display:'flex',gap:4}}>{macro.tiers.map(t=><Btn key={t.id} active={scoreStock.tier===t.id} color={t.color} onClick={()=>updateStock(scoreStock.ticker,s=>({...s,tier:t.id}))}>{t.name}</Btn>)}</div></div>
+          <div><Label>&nbsp;</Label><Btn onClick={()=>{removeStock(scoreStock.ticker);setSelectedStock(null)}} color="var(--r)" style={{fontSize:10}}>✕ Remove</Btn></div>
+        </div>
+        <Label>Macro Driver Scores</Label>
+        <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:20}}>
+          {drivers.map(d=><div key={d.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'var(--bg2)',borderRadius:6,border:'1px solid var(--border)'}}>
+            <div style={{width:140,flexShrink:0}}><div style={{fontSize:11,fontWeight:600,color:'var(--fg2)',fontFamily:'var(--mono)'}}>{d.label.length>20?d.label.slice(0,20)+'…':d.label}</div><div style={{fontSize:9,color:'var(--fg4)'}}>Weight: {d.weight}%</div></div>
+            <div style={{flex:1,display:'flex',gap:2}}>{[1,2,3,4,5,6,7,8,9,10].map(n=>{const val=scoreStock.scores[d.id]||5;const filled=n<=val;const c=val>=7?'var(--g)':val>=5?'var(--y)':'var(--r)';
+              return<button key={n} onClick={()=>updateStock(scoreStock.ticker,s=>({...s,scores:{...s.scores,[d.id]:n}}))} style={{width:28,height:28,borderRadius:3,cursor:'pointer',background:filled?c:'var(--bg3)',border:`1px solid ${filled?c:'var(--border)'}`,color:filled?'#000':'var(--fg4)',fontSize:10,fontFamily:'var(--mono)',fontWeight:700,opacity:filled?(.5+n*.05):.3,transition:'all .1s'}}>{n}</button>})}</div>
+            <span style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,width:20,textAlign:'right',color:(scoreStock.scores[d.id]||5)>=7?'var(--g)':(scoreStock.scores[d.id]||5)>=5?'var(--y)':'var(--r)'}}>{scoreStock.scores[d.id]||5}</span>
+          </div>)}
+        </div>
+        {scoreStock.metrics&&Object.values(scoreStock.metrics).some(v=>v)&&<><Label>Market Data</Label>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:20}}>
+            {[['P/E',scoreStock.metrics.pe_fwd,'ratio'],['EV/EBITDA',scoreStock.metrics.ev_ebitda,'ratio'],['Margin',scoreStock.metrics.oper_margin,'pct'],['FCF Yld',scoreStock.metrics.fcf_yield,'pct'],['Mkt Cap',scoreStock.metrics.mkt_cap,'cap'],['YTD',scoreStock.metrics.chg_ytd,'pct'],['Debt',scoreStock.metrics.net_debt_ebitda,null]].filter(([,v])=>v!==null&&v!==undefined).map(([label,val,type])=>
+              <div key={label} style={{padding:'5px 10px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4}}>
+                <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>{label}</div>
+                <div style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:600,color:type===null?debtColor(val):label==='YTD'?(val>=0?'var(--g)':'var(--r)'):'var(--fg2)'}}>{type===null?debtLabel(val):fmt(val,type)}</div>
+              </div>)}
+          </div></>}
+        <Label>Thesis</Label>
+        <textarea value={scoreStock.thesis||''} onChange={e=>updateStock(scoreStock.ticker,s=>({...s,thesis:e.target.value}))} placeholder="Write the investment thesis..." style={{width:'100%',height:100,padding:12,fontSize:12,lineHeight:1.8,color:'var(--fg2)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6,resize:'vertical',fontFamily:'var(--sans)'}}/>
+      </div>:<div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontFamily:'var(--mono)'}}>Select a stock from the left panel</div>}
+    </div>}
+
+    {/* ─── IMPORT / CSV ─── */}
+    {tab==='import'&&<div style={{padding:24,maxWidth:600}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><Label>CSV Import</Label><Btn onClick={handleExport} style={{fontSize:10}}>↓ Export CSV</Btn></div>
+      <textarea value={csvText} onChange={e=>setCsvText(e.target.value)} placeholder="Paste CSV data here..." style={{width:'100%',height:180,padding:12,fontSize:11,fontFamily:'var(--mono)',lineHeight:1.6,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6,color:'var(--fg2)',resize:'vertical'}}/>
+      <div style={{display:'flex',gap:6,marginTop:8}}>
+        <Btn onClick={handleImport} active={!!csvText.trim()} color="var(--g)" style={{flex:1}}>Preview Import</Btn>
+        <Btn onClick={()=>fileRef.current?.click()} style={{fontSize:10}}>📁 File</Btn>
+        <input ref={fileRef} type="file" accept=".csv,.txt" onChange={handleFile} style={{display:'none'}}/>
+      </div>
+      {preview&&<div style={{marginTop:16,padding:14,borderRadius:6,background:'var(--bg2)',border:'1px solid var(--y)40',animation:'fadeIn .2s'}}>
+        <div style={{fontSize:11,color:'var(--y)',fontFamily:'var(--mono)',fontWeight:600,marginBottom:8}}>⚠ {preview.length} stocks parsed</div>
+        <div style={{maxHeight:140,overflowY:'auto'}}>{preview.slice(0,10).map(s=><div key={s.ticker} style={{fontSize:11,color:'var(--fg3)',padding:'2px 0',fontFamily:'var(--mono)'}}>{s.verdict==='long'?'▲':'▼'} {s.ticker} — {s.name}</div>)}
+          {preview.length>10&&<div style={{fontSize:10,color:'var(--fg4)',marginTop:4}}>+ {preview.length-10} more</div>}</div>
+        <div style={{display:'flex',gap:6,marginTop:10}}>
+          <Btn onClick={()=>confirmImport('replace')} color="var(--r)" style={{flex:1}}>Replace All</Btn>
+          <Btn onClick={()=>confirmImport('merge')} active color="var(--g)" style={{flex:1}}>Merge New</Btn>
+          <Btn onClick={()=>setPreview(null)}>Cancel</Btn>
+        </div>
+      </div>}
+    </div>}
+    </div>
+  </div>;
+}
+
+/* ═══════════════ VIEW: MACRO ENVIRONMENT ═══════════════ */
+function MacroView({macro,setMacro}){
+  const totalW=macro.drivers.reduce((a,d)=>a+(d.active?d.weight:0),0);
+  const updateDriver=(id,field,val)=>setMacro(p=>({...p,drivers:p.drivers.map(d=>d.id===id?{...d,[field]:val}:d)}));
+  const addDriver=()=>setMacro(p=>({...p,drivers:[...p.drivers,{id:`d${Date.now()}`,label:'New Driver',weight:10,description:'',active:true}]}));
+  const removeDriver=id=>setMacro(p=>({...p,drivers:p.drivers.filter(d=>d.id!==id)}));
+  const exportEnv=()=>download(JSON.stringify(macro,null,2),`upside_macro_${new Date().toISOString().slice(0,10)}.json`,'application/json');
+  const importEnv=()=>{const input=document.createElement('input');input.type='file';input.accept='.json';input.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.drivers)setMacro(d)}catch{}};r.readAsText(f)};input.click()};
+
+  return<div style={{padding:28,animation:'fadeIn .3s ease'}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:24}}>
+      <div><h1 style={{fontSize:24,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400}}>Macro Environment</h1>
+        <p style={{fontSize:12,color:'var(--fg4)'}}>Global weights applied across all models</p></div>
+      <div style={{display:'flex',gap:6}}><Btn onClick={importEnv} style={{fontSize:10}}>↑ Import</Btn><Btn onClick={exportEnv} active color="var(--y)" style={{fontSize:10}}>↓ Export</Btn></div>
+    </div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <Label>Macro Drivers ({macro.drivers.length})</Label>
+      <div style={{display:'flex',gap:10,alignItems:'center'}}>
+        <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:totalW===100?'var(--g)':'var(--r)'}}>{totalW}% {totalW!==100?'⚠ must = 100%':'✓'}</span>
+        <Btn onClick={addDriver} active color="var(--g)" style={{fontSize:10}}>+ Add Driver</Btn>
+      </div>
+    </div>
+    <div style={{display:'flex',flexDirection:'column',gap:6,maxWidth:800}}>
+      {macro.drivers.map(d=><div key={d.id} style={{padding:'12px 14px',borderRadius:6,background:d.active?'var(--bg2)':'var(--bg1)',border:`1px solid ${d.active?'var(--border2)':'var(--border)'}`,opacity:d.active?1:.4,transition:'all .2s'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+          <button onClick={()=>updateDriver(d.id,'active',!d.active)} style={{width:18,height:18,borderRadius:3,cursor:'pointer',border:`1px solid ${d.active?'var(--g)':'var(--fg4)'}`,background:d.active?'var(--g)':'transparent',color:'#000',fontSize:11,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>{d.active?'✓':''}</button>
+          <input value={d.label} onChange={e=>updateDriver(d.id,'label',e.target.value)} style={{flex:1,padding:'3px 6px',fontSize:12,fontWeight:600,fontFamily:'var(--mono)',background:'transparent',border:'1px solid transparent',borderRadius:3,color:'var(--fg)'}}/>
+          <input type="range" min="0" max="50" value={d.weight} onChange={e=>updateDriver(d.id,'weight',+e.target.value)} style={{width:100,accentColor:'var(--g)'}}/>
+          <span style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:700,color:'var(--g)',width:34,textAlign:'right'}}>{d.weight}%</span>
+          <button onClick={()=>removeDriver(d.id)} style={{width:22,height:22,borderRadius:3,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+        </div>
+        <input value={d.description} onChange={e=>updateDriver(d.id,'description',e.target.value)} placeholder="Describe this macro driver..." style={{width:'100%',padding:'3px 6px 3px 34px',fontSize:11,color:'var(--fg3)',background:'transparent',border:'1px solid transparent',borderRadius:3}}/>
+      </div>)}
+    </div>
+    <div style={{marginTop:20,padding:14,borderRadius:6,background:'var(--bg2)',border:'1px solid var(--border)',maxWidth:800}}>
+      <Label>Weight Distribution</Label>
+      <div style={{display:'flex',height:20,borderRadius:4,overflow:'hidden',gap:2}}>
+        {macro.drivers.filter(d=>d.active).map((d,i,arr)=><div key={d.id} title={`${d.label}: ${d.weight}%`} style={{flex:d.weight,background:'var(--g)',opacity:.25+(d.weight/60),transition:'flex .4s ease',borderRadius:i===0?'4px 0 0 4px':i===arr.length-1?'0 4px 4px 0':0}}/>)}
+      </div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>
+        {macro.drivers.filter(d=>d.active).map(d=><span key={d.id} style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{d.label.split(' ').slice(0,2).join(' ')} {d.weight}%</span>)}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ═══════════════ VIEW: EXPORT CENTRE ═══════════════ */
+function ExportView({teams,models,macro}){
+  const[scope,setScope]=useState('all');const[selTeam,setSelTeam]=useState(teams[0]?.id||'');
+  const[selModel,setSelModel]=useState(models[0]?.id||'');const[format,setFormat]=useState('csv');
+  const doExport=()=>{const date=new Date().toISOString().slice(0,10);
+    if(format==='json'){let data;if(scope==='all')data={teams,models,macro,exported:date};
+      else if(scope==='team')data={team:teams.find(t=>t.id===selTeam),models:models.filter(m=>m.teamId===selTeam),macro,exported:date};
+      else{data={model:models.find(x=>x.id===selModel),macro,exported:date}}
+      download(JSON.stringify(data,null,2),`upside_${scope}_${date}.json`,'application/json')
+    }else{let csv;if(scope==='all')csv=allStocksToCSV(models,macro.drivers);
+      else if(scope==='team')csv=allStocksToCSV(models.filter(m=>m.teamId===selTeam),macro.drivers);
+      else{const m=models.find(x=>x.id===selModel);csv=stocksToCSV(m?.stocks||[],m?.name||'export',macro.drivers)}
+      download(csv,`upside_${scope}_${date}.csv`)}};
+  const totalS=models.reduce((a,m)=>a+(m.stocks||[]).length,0);
+  return<div style={{padding:28,maxWidth:600,animation:'fadeIn .3s ease'}}>
+    <h1 style={{fontSize:24,fontFamily:'var(--serif)',color:'var(--b)',fontWeight:400,marginBottom:4}}>Export Centre</h1>
+    <p style={{fontSize:12,color:'var(--fg4)',marginBottom:24}}>Export for XA-Coach or backup</p>
+    <Label>Scope</Label>
+    <div style={{display:'flex',gap:6,marginBottom:20}}>
+      {[['all',`All Models (${totalS})`],['team','By Team'],['model','Single Model']].map(([v,l])=>
+        <Btn key={v} active={scope===v} color="var(--b)" onClick={()=>setScope(v)} style={{flex:1}}>{l}</Btn>)}
+    </div>
+    {scope==='team'&&<div style={{marginBottom:20}}><Label>Select Team</Label>
+      <select value={selTeam} onChange={e=>setSelTeam(e.target.value)} style={{width:'100%',padding:'8px 12px',fontSize:12,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
+        {teams.map(t=><option key={t.id} value={t.id}>{t.icon} {t.name} ({models.filter(m=>m.teamId===t.id).reduce((a,m)=>a+(m.stocks||[]).length,0)})</option>)}
+      </select></div>}
+    {scope==='model'&&<div style={{marginBottom:20}}><Label>Select Model</Label>
+      <select value={selModel} onChange={e=>setSelModel(e.target.value)} style={{width:'100%',padding:'8px 12px',fontSize:12,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
+        {models.map(m=><option key={m.id} value={m.id}>{m.name} ({(m.stocks||[]).length})</option>)}
+      </select></div>}
+    <Label>Format</Label>
+    <div style={{display:'flex',gap:6,marginBottom:24}}>
+      <Btn active={format==='csv'} color="var(--g)" onClick={()=>setFormat('csv')} style={{flex:1}}>CSV (XA-Coach)</Btn>
+      <Btn active={format==='json'} color="var(--p)" onClick={()=>setFormat('json')} style={{flex:1}}>JSON (Full Backup)</Btn>
+    </div>
+    <button onClick={doExport} style={{width:'100%',padding:'14px',fontSize:14,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:'pointer',border:'none',background:'var(--b)',color:'#000',transition:'all .2s'}}>↓ Export</button>
+    <div style={{marginTop:20,padding:14,borderRadius:6,background:'var(--bg2)',border:'1px solid var(--border)'}}>
+      <Label>CSV Columns</Label>
+      <div style={{fontSize:11,color:'var(--fg3)',fontFamily:'var(--mono)',lineHeight:2}}>
+        ticker, bbg_ticker, name, sector, verdict, tier, model, team, thesis, px_last, chg_ytd, mkt_cap, pe_fwd, ev_ebitda, net_debt_ebitda, oper_margin, fcf_yield, {macro.drivers.map(d=>d.id).join(', ')}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ═══════════════ MAIN APP ═══════════════ */
+function App(){
+  const[teams,setTeams]=useState(()=>LS.get('upside_teams')||DEFAULT_TEAMS);
+  const[models,setModels]=useState(()=>LS.get('upside_models')||DEFAULT_MODELS);
+  const[macro,setMacro]=useState(()=>LS.get('upside_macro')||DEFAULT_MACRO);
+  const[selected,setSelected]=useState({type:'overview'});
+
+  useEffect(()=>{LS.set('upside_teams',teams)},[teams]);
+  useEffect(()=>{LS.set('upside_models',models)},[models]);
+  useEffect(()=>{LS.set('upside_macro',macro)},[macro]);
+
+  const newModel=()=>{const name=prompt('Model name:');if(!name)return;
+    const id=name.toLowerCase().replace(/\s+/g,'-')+'-'+Date.now();
+    setModels(p=>[...p,{id,name,teamId:teams[0]?.id||'',type:'internal',description:'',created:new Date().toISOString().slice(0,10),stocks:[]}]);
+    setSelected({type:'model',id})};
+
+  const newTeam=()=>{const name=prompt('Team name:');if(!name)return;
+    const icons=['📊','🎯','💎','🔬','⚡','🌐','🏦','📈'];const colors=['#00e676','#40c4ff','#b388ff','#ff9800','#e91e63','#00bcd4','#8bc34a','#ffc107'];
+    setTeams(p=>[...p,{id:name.toLowerCase().replace(/\s+/g,'-'),name,color:colors[teams.length%colors.length],icon:icons[teams.length%icons.length]}])};
+
+  const handleReset=()=>{if(confirm('Reset all Upside data? This cannot be undone.')){
+    ['upside_teams','upside_models','upside_macro'].forEach(k=>localStorage.removeItem(k));
+    setTeams(DEFAULT_TEAMS);setModels(DEFAULT_MODELS);setMacro(DEFAULT_MACRO);setSelected({type:'overview'})}};
+
+  let content;
+  if(selected.type==='overview')content=<OverviewView teams={teams} models={models} macro={macro} onSelect={setSelected}/>;
+  else if(selected.type==='macro')content=<MacroView macro={macro} setMacro={setMacro}/>;
+  else if(selected.type==='export')content=<ExportView teams={teams} models={models} macro={macro}/>;
+  else if(selected.type==='team'){const team=teams.find(t=>t.id===selected.id);content=team?<TeamView team={team} models={models} macro={macro} onSelect={setSelected} setModels={setModels}/>:null}
+  else if(selected.type==='model'){const model=models.find(m=>m.id===selected.id);content=model?<ModelView model={model} setModels={setModels} teams={teams} macro={macro}/>:null}
+
+  return<div style={{display:'flex',height:'100vh'}}>
+    <Sidebar teams={teams} models={models} selected={selected} onSelect={setSelected} onNewModel={newModel} onNewTeam={newTeam}/>
+    <div style={{flex:1,overflowY:'auto',position:'relative'}}>
+      <div style={{position:'absolute',top:10,right:16,zIndex:10}}>
+        <button onClick={handleReset} title="Reset all data" style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg4)',cursor:'pointer',padding:'4px 8px',fontSize:9,fontFamily:'var(--mono)'}}>Reset</button>
+      </div>
+      {content}
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

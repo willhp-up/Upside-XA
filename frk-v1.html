@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frank — Singapore | XA Pan Asian Thematic</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#010409;--bg1:#0d1117;--bg2:#161b22;--bg3:#21262d;
+  --border:#1e293b;--border2:#30363d;
+  --fg:#e6edf3;--fg2:#c9d1d9;--fg3:#8b949e;--fg4:#4b5563;
+  --mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
+  --sans:-apple-system,'Segoe UI',sans-serif;
+  --accent:#14b8a6;--accent2:#2dd4bf;--g:#10b981;--r:#ef4444;--b:#3b82f6;
+}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);overflow-x:hidden}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes glow{0%,100%{box-shadow:0 0 8px var(--accent)33}50%{box-shadow:0 0 20px var(--accent)55}}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg1)}::-webkit-scrollbar-thumb{background:var(--fg4);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo, useCallback } = React;
+
+/* ═══════════════ ENGINE ═══════════════ */
+const BASE_PROBS = [0.05, 0.10, 0.15, 0.35, 0.20, 0.10, 0.05];
+const SCENARIO_LABELS = ['Deep Bear','Bear','Mild Bear','Base','Mild Bull','Bull','Deep Bull'];
+const SCENARIO_COLORS = ['#ef4444','#f97316','#eab308','#6b7280','#22c55e','#10b981','#059669'];
+
+function runEngine(stock, driverMap, globalDrivers) {
+  const compositeSignal = driverMap.reduce((sum, dm) => {
+    const drv = globalDrivers.find(d => d.id === dm.driverId);
+    const sig = drv ? drv.signal : 0;
+    const sens = stock.sens[dm.driverId] || 0;
+    return sum + (sig * sens * dm.weight / 100);
+  }, 0);
+
+  const shift = compositeSignal * 0.4;
+  let probs = BASE_PROBS.map((p, i) => {
+    const idx = i - 3;
+    return Math.max(0.01, p + shift * idx * 0.08);
+  });
+  const total = probs.reduce((a, b) => a + b, 0);
+  probs = probs.map(p => p / total);
+
+  const ev = stock.prices.reduce((sum, price, i) => sum + price * probs[i], 0);
+  const rr = ((ev - stock.currentPrice) / stock.currentPrice) * 100;
+  const bullReturn = stock.prices.slice(4).reduce((s, p, i) => s + (p - stock.currentPrice) / stock.currentPrice * probs[i + 4], 0) * 100;
+  const bearReturn = stock.prices.slice(0, 3).reduce((s, p, i) => s + (p - stock.currentPrice) / stock.currentPrice * probs[i], 0) * 100;
+  const skew = bullReturn + bearReturn;
+
+  let verdict = 'HOLD';
+  if (rr > 15) verdict = 'STRONG LONG';
+  else if (rr > 5) verdict = 'LONG';
+  else if (rr < -15) verdict = 'STRONG SHORT';
+  else if (rr < -5) verdict = 'SHORT';
+
+  return { ev, rr, skew, probs, compositeSignal, verdict, bullReturn, bearReturn };
+}
+
+/* ═══════════════ OPERATOR CONFIG ═══════════════ */
+const OPERATOR = {
+  id: "frk",
+  name: "Frank",
+  fullName: "Frank",
+  series: "Pan Asian Thematic",
+  team: "Singapore",
+  color: "#14b8a6",
+  icon: "🦁",
+  desc: "US-China Intermediary · Regional Capital Hub · ASEAN Growth · Financial Services",
+  thesis: "Long Singapore's structural position as the neutral capital hub between US and China — banks capturing wealth flows, REITs benefiting from data centre and logistics demand, and platform plays bridging Southeast Asia. Short domestically constrained telcos and commoditised industrials facing margin pressure.",
+
+  driverMap: [{"driverId": "frk_uscn", "weight": 25}, {"driverId": "frk_hub", "weight": 20}, {"driverId": "frk_asean", "weight": 15}, {"driverId": "frk_finserv", "weight": 15}, {"driverId": "frk_rates", "weight": 15}, {"driverId": "frk_sgd", "weight": 10}],
+
+  drivers: [{"id": "frk_uscn", "label": "US-China Intermediary Role", "signal": 0.6}, {"id": "frk_hub", "label": "Regional Capital Hub", "signal": 0.7}, {"id": "frk_asean", "label": "ASEAN Growth Tailwind", "signal": 0.5}, {"id": "frk_finserv", "label": "Financial Services Demand", "signal": 0.5}, {"id": "frk_rates", "label": "Rate Environment", "signal": 0.3}, {"id": "frk_sgd", "label": "SGD Strength", "signal": 0.3}],
+
+  stocks: [
+    {"ticker":"D05.SI","name":"DBS Group","verdict":"long","sector":"Banking","currency":"SGD","currentPrice":56.89,"prices":[32,40,48,61,74,90,110],"sens":{"frk_uscn":0.6,"frk_hub":0.8,"frk_asean":0.5,"frk_finserv":0.9,"frk_rates":0.6,"frk_sgd":0.4}},
+    {"ticker":"O39.SI","name":"OCBC Bank","verdict":"long","sector":"Banking","currency":"SGD","currentPrice":21.11,"prices":[12,15,18,23,28,34,42],"sens":{"frk_uscn":0.5,"frk_hub":0.7,"frk_asean":0.5,"frk_finserv":0.8,"frk_rates":0.6,"frk_sgd":0.4}},
+    {"ticker":"U11.SI","name":"UOB","verdict":"long","sector":"Banking","currency":"SGD","currentPrice":38.39,"prices":[21,26,33,41,50,62,76],"sens":{"frk_uscn":0.5,"frk_hub":0.7,"frk_asean":0.6,"frk_finserv":0.8,"frk_rates":0.5,"frk_sgd":0.3}},
+    {"ticker":"A17U.SI","name":"CapitaLand Ascendas REIT","verdict":"long","sector":"DC / Logistics REIT","currency":"SGD","currentPrice":2.71,"prices":[1.5,1.9,2.35,2.9,3.5,4.2,5.1],"sens":{"frk_uscn":0.4,"frk_hub":0.7,"frk_asean":0.6,"frk_finserv":0.3,"frk_rates":-0.4,"frk_sgd":0.2}},
+    {"ticker":"BN4.SI","name":"Keppel Ltd","verdict":"long","sector":"Infra / Data Centre","currency":"SGD","currentPrice":7.5,"prices":[4.0,5.0,6.3,8.1,10.0,12.3,15.2],"sens":{"frk_uscn":0.5,"frk_hub":0.6,"frk_asean":0.7,"frk_finserv":0.3,"frk_rates":-0.2,"frk_sgd":0.2}},
+    {"ticker":"SE","name":"Sea Ltd","verdict":"long","sector":"Platform / ASEAN","currency":"USD","currentPrice":145,"prices":[75,95,120,155,195,245,310],"sens":{"frk_uscn":0.3,"frk_hub":0.4,"frk_asean":0.9,"frk_finserv":0.4,"frk_rates":0.2,"frk_sgd":0.1}},
+    {"ticker":"Z74.SI","name":"Singtel","verdict":"short","sector":"Telco","currency":"SGD","currentPrice":4.84,"prices":[2.5,3.2,4.0,4.8,5.8,7.0,8.5],"sens":{"frk_uscn":-0.1,"frk_hub":0.2,"frk_asean":0.3,"frk_finserv":0.1,"frk_rates":-0.3,"frk_sgd":-0.2}},
+    {"ticker":"C6L.SI","name":"Singapore Airlines","verdict":"short","sector":"Aviation","currency":"SGD","currentPrice":7.0,"prices":[3.5,4.5,5.8,6.9,8.4,10.2,12.5],"sens":{"frk_uscn":-0.2,"frk_hub":0.3,"frk_asean":0.4,"frk_finserv":0.0,"frk_rates":-0.2,"frk_sgd":-0.4}},
+    {"ticker":"F34.SI","name":"Wilmar International","verdict":"short","sector":"Commodity / Agri","currency":"SGD","currentPrice":3.2,"prices":[1.6,2.1,2.7,3.15,3.85,4.7,5.8],"sens":{"frk_uscn":-0.3,"frk_hub":0.1,"frk_asean":0.3,"frk_finserv":0.0,"frk_rates":-0.1,"frk_sgd":-0.3}},
+    {"ticker":"S68.SI","name":"SGX Ltd","verdict":"short","sector":"Exchange / Infra","currency":"SGD","currentPrice":13.5,"prices":[7.0,9.0,11.5,13.3,16.0,19.5,24.0],"sens":{"frk_uscn":0.2,"frk_hub":0.4,"frk_asean":0.2,"frk_finserv":0.5,"frk_rates":-0.2,"frk_sgd":0.1}}
+  ]
+};
+
+/* ═══════════════ STORAGE ═══════════════ */
+const STORAGE_KEY = 'xa_frk_v1_drivers';
+function loadDrivers() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return OPERATOR.drivers.map(d => ({ ...d }));
+}
+function saveDrivers(drivers) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(drivers)); } catch (e) {}
+}
+
+/* ═══════════════ FORMAT HELPERS ═══════════════ */
+const fmt = (v, t) => {
+  if (t === 'pct') return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  if (t === 'ratio') return `${v.toFixed(1)}x`;
+  if (t === 'price') return v >= 1000 ? v.toLocaleString('en', { maximumFractionDigits: 0 }) : v.toFixed(2);
+  return v.toFixed(1);
+};
+
+/* ═══════════════ COMPONENTS ═══════════════ */
+function Badge({ children, color, style: sx }) {
+  return <span style={{
+    display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 3,
+    fontSize: 10, fontWeight: 700, fontFamily: 'var(--mono)', letterSpacing: '.04em',
+    background: `${color}15`, color, border: `1px solid ${color}35`, ...sx
+  }}>{children}</span>;
+}
+
+function DriverSlider({ driver, onChange }) {
+  const color = driver.signal > 0.3 ? 'var(--g)' : driver.signal < -0.3 ? 'var(--r)' : 'var(--fg3)';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
+      <span style={{ width: 200, fontSize: 12, color: 'var(--fg2)', fontFamily: 'var(--mono)' }}>{driver.label}</span>
+      <input type="range" min="-100" max="100" value={Math.round(driver.signal * 100)}
+        onChange={e => onChange(driver.id, parseInt(e.target.value) / 100)}
+        style={{ flex: 1, accentColor: color, cursor: 'pointer' }} />
+      <span style={{ width: 50, textAlign: 'right', fontSize: 13, fontFamily: 'var(--mono)', fontWeight: 700, color }}>
+        {driver.signal > 0 ? '+' : ''}{driver.signal.toFixed(2)}
+      </span>
+      <span style={{ width: 40, textAlign: 'right', fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)' }}>
+        {OPERATOR.driverMap.find(dm => dm.driverId === driver.id)?.weight}%
+      </span>
+    </div>
+  );
+}
+
+function ScenarioBar({ probs, prices, currentPrice }) {
+  return (
+    <div style={{ display: 'flex', gap: 1, height: 28, borderRadius: 4, overflow: 'hidden' }}>
+      {probs.map((p, i) => {
+        const ret = ((prices[i] - currentPrice) / currentPrice * 100);
+        return (
+          <div key={i} style={{
+            flex: p, background: SCENARIO_COLORS[i] + '40', position: 'relative',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRight: i < 6 ? '1px solid var(--bg)' : 'none',
+          }} title={`${SCENARIO_LABELS[i]}: ${(p * 100).toFixed(1)}% → ${fmt(prices[i], 'price')} (${fmt(ret, 'pct')})`}>
+            {p > 0.08 && <span style={{ fontSize: 8, fontFamily: 'var(--mono)', color: SCENARIO_COLORS[i], fontWeight: 700 }}>
+              {(p * 100).toFixed(0)}%
+            </span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StockRow({ stock, eng, rank }) {
+  const isLong = stock.verdict === 'long';
+  const verdictColor = eng.rr > 15 ? 'var(--g)' : eng.rr > 5 ? '#22c55e' : eng.rr < -5 ? 'var(--r)' : 'var(--fg3)';
+  return (
+    <div style={{
+      background: 'var(--bg1)', borderRadius: 8, padding: '14px 18px', marginBottom: 6,
+      border: `1px solid var(--border)`, borderLeft: `3px solid ${isLong ? 'var(--g)' : 'var(--r)'}`,
+      animation: `fadeIn .3s ease ${rank * 0.04}s both`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 700, color: 'var(--fg)' }}>{stock.ticker}</span>
+          <span style={{ fontSize: 12, color: 'var(--fg3)' }}>{stock.name}</span>
+          <Badge color={isLong ? 'var(--g)' : 'var(--r)'}>{stock.verdict.toUpperCase()}</Badge>
+          <span style={{ fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)' }}>{stock.sector}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)' }}>CURRENT</div>
+            <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700 }}>{stock.currency} {fmt(stock.currentPrice, 'price')}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)' }}>EV</div>
+            <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: eng.ev > stock.currentPrice ? 'var(--g)' : 'var(--r)' }}>
+              {fmt(eng.ev, 'price')}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)' }}>R/R</div>
+            <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: verdictColor }}>{fmt(eng.rr, 'pct')}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)' }}>SKEW</div>
+            <div style={{ fontSize: 12, fontFamily: 'var(--mono)', color: eng.skew > 0 ? 'var(--g)' : 'var(--r)' }}>{fmt(eng.skew, 'pct')}</div>
+          </div>
+          <Badge color={verdictColor} style={{ minWidth: 90, justifyContent: 'center' }}>{eng.verdict}</Badge>
+        </div>
+      </div>
+      <ScenarioBar probs={eng.probs} prices={stock.prices} currentPrice={stock.currentPrice} />
+    </div>
+  );
+}
+
+/* ═══════════════ MAIN APP ═══════════════ */
+function IpManEngine() {
+  const [drivers, setDrivers] = useState(loadDrivers);
+  const [view, setView] = useState('dashboard');
+  const [sortBy, setSortBy] = useState('rr');
+
+  const updateDriver = useCallback((id, signal) => {
+    setDrivers(prev => {
+      const next = prev.map(d => d.id === id ? { ...d, signal } : d);
+      saveDrivers(next);
+      return next;
+    });
+  }, []);
+
+  const resetDrivers = useCallback(() => {
+    const defaults = OPERATOR.drivers.map(d => ({ ...d }));
+    setDrivers(defaults);
+    saveDrivers(defaults);
+  }, []);
+
+  const results = useMemo(() => {
+    return OPERATOR.stocks.map(s => {
+      const eng = runEngine(s, OPERATOR.driverMap, drivers);
+      return { ...s, eng };
+    });
+  }, [drivers]);
+
+  const sorted = useMemo(() => {
+    const copy = [...results];
+    if (sortBy === 'rr') copy.sort((a, b) => Math.abs(b.eng.rr) - Math.abs(a.eng.rr));
+    if (sortBy === 'skew') copy.sort((a, b) => b.eng.skew - a.eng.skew);
+    if (sortBy === 'alpha') copy.sort((a, b) => a.ticker.localeCompare(b.ticker));
+    if (sortBy === 'side') copy.sort((a, b) => (a.verdict === 'long' ? 0 : 1) - (b.verdict === 'long' ? 0 : 1));
+    return copy;
+  }, [results, sortBy]);
+
+  const longs = results.filter(s => s.verdict === 'long');
+  const shorts = results.filter(s => s.verdict === 'short');
+  const avgLongRR = longs.length ? longs.reduce((a, s) => a + s.eng.rr, 0) / longs.length : 0;
+  const avgShortRR = shorts.length ? shorts.reduce((a, s) => a + s.eng.rr, 0) / shorts.length : 0;
+  const avgSkew = results.reduce((a, s) => a + s.eng.skew, 0) / results.length;
+  const compositeSignal = drivers.reduce((sum, d) => {
+    const dm = OPERATOR.driverMap.find(m => m.driverId === d.id);
+    return sum + (d.signal * (dm ? dm.weight : 0) / 100);
+  }, 0);
+
+  let regime = 'NEUTRAL';
+  if (compositeSignal > 0.15) regime = 'BULLISH';
+  if (compositeSignal > 0.35) regime = 'STRONG BULL';
+  if (compositeSignal < -0.15) regime = 'BEARISH';
+  if (compositeSignal < -0.35) regime = 'STRONG BEAR';
+  const regimeColor = regime.includes('BULL') ? 'var(--g)' : regime.includes('BEAR') ? 'var(--r)' : 'var(--fg3)';
+
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: '◉' },
+    { id: 'macro', label: 'Macro Drivers', icon: '⚡' },
+    { id: 'stocks', label: 'Stock Universe', icon: '◆' },
+    { id: 'thesis', label: 'Thesis', icon: '📋' },
+  ];
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* HEADER */}
+      <div style={{ background: 'var(--bg1)', borderBottom: '1px solid var(--border2)', padding: '0 28px', display: 'flex', alignItems: 'center', height: 52, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginRight: 40 }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent)55', animation: 'pulse 2s infinite' }} />
+          <span style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--accent)' }}>XA</span>
+          <span style={{ fontSize: 10, color: 'var(--fg4)', fontFamily: 'var(--mono)', letterSpacing: '.05em' }}>Pan Asian Thematic</span>
+        </div>
+        <div style={{ display: 'flex', gap: 2 }}>
+          {navItems.map(n => (
+            <button key={n.id} onClick={() => setView(n.id)} style={{
+              padding: '14px 16px', fontSize: 11, fontFamily: 'var(--mono)', fontWeight: 600, cursor: 'pointer',
+              border: 'none', background: 'transparent', color: view === n.id ? 'var(--fg)' : 'var(--fg4)',
+              borderBottom: view === n.id ? '2px solid var(--accent)' : '2px solid transparent', transition: 'all .15s',
+            }}>{n.icon} {n.label}</button>
+          ))}
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Badge color={regimeColor}>{regime}</Badge>
+          <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--fg3)' }}>
+            Composite: <span style={{ color: compositeSignal > 0 ? 'var(--g)' : 'var(--r)', fontWeight: 700 }}>
+              {compositeSignal > 0 ? '+' : ''}{compositeSignal.toFixed(3)}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      {/* OPERATOR IDENTITY BAR */}
+      <div style={{ background: 'var(--bg1)', borderBottom: '1px solid var(--border)', padding: '16px 28px', display: 'flex', alignItems: 'center', gap: 16 }}>
+        <span style={{ fontSize: 36 }}>{OPERATOR.icon}</span>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <h1 style={{ fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 800, color: 'var(--accent)' }}>{OPERATOR.name}</h1>
+            <span style={{ color: 'var(--fg3)', fontSize: 14 }}>{OPERATOR.fullName}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--fg4)', fontFamily: 'var(--mono)', marginTop: 2 }}>{OPERATOR.desc}</div>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 24 }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: 'var(--fg4)', fontFamily: 'var(--mono)', letterSpacing: '.1em' }}>NAMES</div>
+            <div style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700 }}>{results.length}</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: 'var(--fg4)', fontFamily: 'var(--mono)', letterSpacing: '.1em' }}>LONG</div>
+            <div style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--g)' }}>{longs.length}</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: 'var(--fg4)', fontFamily: 'var(--mono)', letterSpacing: '.1em' }}>SHORT</div>
+            <div style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--r)' }}>{shorts.length}</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: 'var(--fg4)', fontFamily: 'var(--mono)', letterSpacing: '.1em' }}>AVG L R/R</div>
+            <div style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700, color: avgLongRR > 0 ? 'var(--g)' : 'var(--r)' }}>{fmt(avgLongRR, 'pct')}</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 9, color: 'var(--fg4)', fontFamily: 'var(--mono)', letterSpacing: '.1em' }}>AVG SKEW</div>
+            <div style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700, color: avgSkew > 0 ? 'var(--g)' : 'var(--r)' }}>{fmt(avgSkew, 'pct')}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* CONTENT */}
+      <div style={{ flex: 1, padding: 28, overflowY: 'auto' }}>
+
+        {/* ═══ DASHBOARD VIEW ═══ */}
+        {view === 'dashboard' && (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+              {/* Top Longs */}
+              <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 18, border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--g)', fontWeight: 700, marginBottom: 12, letterSpacing: '.08em' }}>🔺 TOP LONGS BY R/R</div>
+                {longs.sort((a, b) => b.eng.rr - a.eng.rr).slice(0, 5).map((s, i) => (
+                  <div key={s.ticker} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < 4 ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600 }}>{s.ticker}</span>
+                      <span style={{ fontSize: 11, color: 'var(--fg3)' }}>{s.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 16 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--g)', fontWeight: 700 }}>{fmt(s.eng.rr, 'pct')}</span>
+                      <Badge color={s.eng.rr > 15 ? 'var(--g)' : '#22c55e'}>{s.eng.verdict}</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Top Shorts */}
+              <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 18, border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--r)', fontWeight: 700, marginBottom: 12, letterSpacing: '.08em' }}>🔻 SHORTS BY R/R</div>
+                {shorts.sort((a, b) => a.eng.rr - b.eng.rr).map((s, i) => (
+                  <div key={s.ticker} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < shorts.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 600 }}>{s.ticker}</span>
+                      <span style={{ fontSize: 11, color: 'var(--fg3)' }}>{s.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 16 }}>
+                      <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--r)', fontWeight: 700 }}>{fmt(s.eng.rr, 'pct')}</span>
+                      <Badge color="var(--r)">{s.eng.verdict}</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Macro Summary */}
+            <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 18, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--accent)', fontWeight: 700, marginBottom: 12, letterSpacing: '.08em' }}>⚡ MACRO SIGNAL SNAPSHOT</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+                {drivers.map(d => {
+                  const dm = OPERATOR.driverMap.find(m => m.driverId === d.id);
+                  const col = d.signal > 0.3 ? 'var(--g)' : d.signal < -0.3 ? 'var(--r)' : 'var(--fg3)';
+                  return (
+                    <div key={d.id} style={{ textAlign: 'center', padding: 10, background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 9, color: 'var(--fg4)', fontFamily: 'var(--mono)', marginBottom: 4 }}>{dm?.weight}%</div>
+                      <div style={{ fontSize: 18, fontFamily: 'var(--mono)', fontWeight: 700, color: col }}>{d.signal > 0 ? '+' : ''}{d.signal.toFixed(2)}</div>
+                      <div style={{ fontSize: 9, color: 'var(--fg3)', fontFamily: 'var(--mono)', marginTop: 4, lineHeight: 1.2 }}>{d.label.split('(')[0].trim()}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ MACRO VIEW ═══ */}
+        {view === 'macro' && (
+          <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 24, border: '1px solid var(--border)', maxWidth: 800 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--accent)' }}>Macro Driver Controls</div>
+              <button onClick={resetDrivers} style={{
+                padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent',
+                color: 'var(--fg4)', fontSize: 10, fontFamily: 'var(--mono)', cursor: 'pointer'
+              }}>Reset Defaults</button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg3)', marginBottom: 16, lineHeight: 1.6 }}>
+              Adjust macro signals from -1.0 (strong bear) to +1.0 (strong bull). Weights must sum to 100%.
+              Driver signals flow through stock-level sensitivity maps to modulate the 7-scenario probability engine.
+            </div>
+            {drivers.map(d => <DriverSlider key={d.id} driver={d} onChange={updateDriver} />)}
+            <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--bg2)', borderRadius: 6, display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--fg3)' }}>Weighted Composite Signal</span>
+              <span style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: compositeSignal > 0 ? 'var(--g)' : 'var(--r)' }}>
+                {compositeSignal > 0 ? '+' : ''}{compositeSignal.toFixed(4)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ STOCKS VIEW ═══ */}
+        {view === 'stocks' && (
+          <div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              {['rr', 'skew', 'side', 'alpha'].map(s => (
+                <button key={s} onClick={() => setSortBy(s)} style={{
+                  padding: '5px 12px', borderRadius: 4, border: `1px solid ${sortBy === s ? 'var(--accent)60' : 'var(--border)'}`,
+                  background: sortBy === s ? 'var(--accent)12' : 'transparent',
+                  color: sortBy === s ? 'var(--accent)' : 'var(--fg4)',
+                  fontSize: 10, fontFamily: 'var(--mono)', fontWeight: 600, cursor: 'pointer',
+                }}>Sort: {s.toUpperCase()}</button>
+              ))}
+            </div>
+            {sorted.map((s, i) => <StockRow key={s.ticker} stock={s} eng={s.eng} rank={i} />)}
+          </div>
+        )}
+
+        {/* ═══ THESIS VIEW ═══ */}
+        {view === 'thesis' && (
+          <div style={{ maxWidth: 800 }}>
+            <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 24, border: '1px solid var(--border)', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--accent)', marginBottom: 12 }}>Investment Thesis</div>
+              <p style={{ fontSize: 13, color: 'var(--fg2)', lineHeight: 1.8 }}>{OPERATOR.thesis}</p>
+            </div>
+
+            <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 24, border: '1px solid var(--border)', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--accent)', marginBottom: 12 }}>Macro Framework</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {OPERATOR.driverMap.map(dm => {
+                  const d = OPERATOR.drivers.find(dr => dr.id === dm.driverId);
+                  return (
+                    <div key={dm.driverId} style={{ padding: 12, background: 'var(--bg2)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--fg2)', fontWeight: 600 }}>{d?.label}</span>
+                        <Badge color="var(--accent)">{dm.weight}%</Badge>
+                      </div>
+                      <div style={{
+                        height: 4, borderRadius: 2, background: 'var(--bg)',
+                        marginTop: 8,
+                      }}>
+                        <div style={{
+                          height: '100%', borderRadius: 2, width: `${dm.weight}%`,
+                          background: `linear-gradient(90deg, var(--accent), var(--accent2))`,
+                        }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--bg1)', borderRadius: 10, padding: 24, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 14, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--accent)', marginBottom: 12 }}>Engine Methodology</div>
+              <div style={{ fontSize: 12, color: 'var(--fg3)', lineHeight: 1.8 }}>
+                <p style={{ marginBottom: 8 }}>The 7-scenario probability engine generates expected values for each stock using macro-weighted composite signals passed through stock-level sensitivity maps.</p>
+                <p style={{ marginBottom: 8 }}>Base probabilities: Deep Bear 5% · Bear 10% · Mild Bear 15% · Base 35% · Mild Bull 20% · Bull 10% · Deep Bull 5%</p>
+                <p style={{ marginBottom: 8 }}>These base probabilities are modulated by the composite signal (weighted sum of driver signals × stock sensitivities), shifting probability mass toward bull or bear scenarios depending on the macro environment.</p>
+                <p>Output metrics: Expected Value (probability-weighted price), Risk/Reward (% from current to EV), Skew (asymmetry of bull vs bear returns), Verdict (Strong Long → Strong Short).</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* FOOTER */}
+      <div style={{ background: 'var(--bg1)', borderTop: '1px solid var(--border)', padding: '8px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+        <span style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg4)' }}>
+          XA · Frank v1 · Pan Asian Thematic · {OPERATOR.team}
+        </span>
+        <span style={{ fontSize: 10, fontFamily: 'var(--mono)', color: 'var(--fg4)' }}>
+          powered by Upside · <a href="https://upside-xa.com" target="_blank" style={{ color: 'var(--accent)', textDecoration: 'none' }}>upside-xa.com</a>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<IpManEngine />);
+</script>
+</body>
+</html>

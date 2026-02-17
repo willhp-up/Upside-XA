@@ -9,6 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--bg0:#04060a;--bg1:#090c14;--bg2:#0e1220;--bg3:#161c2e;--bg4:#1e2640;--fg:#e4e8f4;--fg2:#b4bcd4;--fg3:#7580a0;--fg4:#4a5270;--border:rgba(120,140,200,.08);--border2:rgba(120,140,200,.16);--g:#00e676;--g2:#69f0ae;--r:#ff3d71;--y:#ffc107;--b:#40c4ff;--p:#b388ff;--mono:'JetBrains Mono','Fira Code','Consolas',monospace;--sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;--serif:'Instrument Serif',Georgia,serif}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}html,body,#root{height:100%}
@@ -453,6 +454,7 @@ function Header({view, setView}) {
     {id:'overview', label:'Overview', icon:'◉'},
     {id:'macro', label:'Macro Dashboard', icon:'⚡'},
     {id:'operators', label:'Operators', icon:'◆'},
+    {id:'data', label:'Data', icon:'⬆'},
     {id:'export', label:'Export', icon:'↓'},
   ];
   return <div style={{background:'var(--bg1)',borderBottom:'1px solid var(--border2)',padding:'0 28px',display:'flex',alignItems:'center',gap:0,height:52,flexShrink:0}}>
@@ -673,6 +675,366 @@ function OperatorsView({operators, globalDrivers}) {
   </div>;
 }
 
+/* ═══════════════ DATA UPLOAD ═══════════════ */
+
+/* Operator screening rules: geography + GICS sector matching */
+const SCREEN_RULES = {
+  tig: { sectors: ['Transportation','Hotels, Restaurants & Leisure','Airlines','Air Freight & Logistics','Leisure Products','Passenger Airlines','Hotels, Resorts & Cruise Lines','Casinos & Gaming','Leisure Facilities','Airport Services'], geo: null },
+  rone: { sectors: ['Aerospace & Defense'], geo: ['GB','FR','DE','IT','SE','NO','NL','ES','FI','DK','PL','RO','GR','CZ','BE','IL'] },
+  tanto: { sectors: ['Energy','Oil, Gas & Consumable Fuels','Energy Equipment & Services','Oil & Gas Exploration & Production','Oil & Gas Refining & Marketing','Integrated Oil & Gas'], geo: null },
+  jack: { sectors: ['Semiconductors & Semiconductor Equipment','Technology Hardware, Storage & Peripherals','Electronic Equipment, Instruments & Components','Communications Equipment','IT Services','Systems Software','Application Software'], geo: null, keywords: ['semiconductor','chip','AI','neural','GPU','ASML','foundry','wafer','networking','cyber'] },
+  boon: { sectors: ['Transaction & Payment Processing Services','Financial Exchanges & Data','Consumer Finance','Diversified Financial Services'], geo: null, keywords: ['payment','fintech','digital bank','BNPL','crypto','commerce platform'] },
+  oz: { sectors: ['Pharmaceuticals','Biotechnology','Life Sciences Tools & Services','Health Care Equipment & Supplies','Health Care Technology','Managed Health Care','Health Care Distributors','Health Care Services','Health Care Facilities'], geo: null },
+  ipm: { sectors: null, geo: ['CN','HK'] },
+  miu: { sectors: null, geo: ['JP'] },
+  ctc: { sectors: null, geo: ['TW'] },
+  wzh: { sectors: null, geo: ['KR'] },
+  frk: { sectors: null, geo: ['SG'] },
+};
+
+function matchOperators(row) {
+  const matches = [];
+  const country = (row.country || '').toUpperCase().trim();
+  const sector = (row.gics_sector || '').trim();
+  const industry = (row.gics_industry || '').trim();
+  const name = (row.name || '').toLowerCase();
+
+  Object.entries(SCREEN_RULES).forEach(([opId, rule]) => {
+    let geoMatch = !rule.geo || rule.geo.includes(country);
+    let sectorMatch = !rule.sectors || rule.sectors.some(s =>
+      sector.toLowerCase().includes(s.toLowerCase()) ||
+      industry.toLowerCase().includes(s.toLowerCase())
+    );
+    let keywordMatch = rule.keywords ? rule.keywords.some(k => name.includes(k.toLowerCase()) || industry.toLowerCase().includes(k.toLowerCase())) : false;
+
+    if (rule.geo && rule.sectors) {
+      if (geoMatch && (sectorMatch || keywordMatch)) matches.push(opId);
+    } else if (rule.geo) {
+      if (geoMatch) matches.push(opId);
+    } else if (rule.sectors) {
+      if (sectorMatch || keywordMatch) matches.push(opId);
+    }
+  });
+  return matches;
+}
+
+/* Normalise ticker for matching (strip exchange suffixes, leading zeros) */
+function normTicker(t) {
+  if (!t) return '';
+  return t.replace(/\s+(Equity|Index)$/i,'').replace(/\s+/g,' ').trim().toUpperCase();
+}
+
+/* Build a lookup map from BBG tickers to XA operator tickers */
+function buildTickerMap(operators) {
+  const map = {};
+  operators.forEach(op => {
+    op.stocks.forEach(s => {
+      const variants = [
+        s.ticker.toUpperCase(),
+        s.ticker.replace('.HK','').replace(/^0+/,'') + ' HK',
+        s.ticker.replace('.T','') + ' JP',
+        s.ticker.replace('.TW','') + ' TT',
+        s.ticker.replace('.KS','') + ' KS',
+        s.ticker.replace('.SI','') + ' SP',
+        s.ticker.replace('.SZ','') + ' CH',
+        s.ticker.replace('.SH','') + ' CH',
+        s.ticker.replace('.L','') + ' LN',
+        s.ticker.replace('.DE','') + ' GR',
+        s.ticker.replace('.PA','') + ' FP',
+        s.ticker.replace('.MI','') + ' IM',
+        s.ticker.replace('.MC','') + ' SM',
+        s.ticker.replace('.OL','') + ' NO',
+        s.ticker.replace('.AS','') + ' NA',
+        s.ticker.replace('.AX','') + ' AU',
+        s.ticker.replace('.SW','') + ' SW',
+        s.ticker.replace('.IS','') + ' TI',
+        s.ticker + ' US',
+      ];
+      variants.forEach(v => { map[v.toUpperCase()] = { opId: op.id, ticker: s.ticker }; });
+    });
+  });
+  return map;
+}
+
+function DataView({operators, globalDrivers, snapData, setSnapData}) {
+  const [dragOver, setDragOver] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [error, setError] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [sortCol, setSortCol] = useState('mkt_cap_m');
+  const [sortDir, setSortDir] = useState('desc');
+  const [searchQ, setSearchQ] = useState('');
+  const [opFilter, setOpFilter] = useState('all');
+  const fileRef = useRef();
+
+  const parseFile = (file) => {
+    setParsing(true);
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array'});
+        /* Try Upload sheet first, fall back to first sheet */
+        const sheetName = wb.SheetNames.includes('Upload') ? 'Upload' : wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
+        const raw = XLSX.utils.sheet_to_json(ws, {defval:''});
+
+        if (!raw.length) { setError('No data found in sheet'); setParsing(false); return; }
+
+        /* Parse and normalise */
+        const tickerMap = buildTickerMap(operators);
+        const parsed = raw
+          .filter(r => r.bbg_ticker || r.BBG_TICKER || r.ticker || r.xa_ticker)
+          .map(r => {
+            const bbg = (r.bbg_ticker || r.BBG_TICKER || r.ticker || r.xa_ticker || '').toString().trim();
+            const price = parseFloat(r.price || r.Price || r.PX_LAST || r.px_last || 0);
+            const mktCap = parseFloat(r.mkt_cap_m || r.CUR_MKT_CAP || r.mkt_cap || 0);
+            const row = {
+              bbg_ticker: bbg,
+              name: (r.name || r.Name || r.SECURITY_NAME || '').toString().trim(),
+              country: (r.country || r.Country || r.COUNTRY_ISO || '').toString().trim(),
+              gics_sector: (r.gics_sector || r.GICS_SECTOR_NAME || '').toString().trim(),
+              gics_industry: (r.gics_industry || r.GICS_INDUSTRY_GROUP_NAME || '').toString().trim(),
+              ccy: (r.ccy || r.Ccy || r.CRNCY || '').toString().trim(),
+              mkt_cap_m: mktCap,
+              price: price,
+              fwd_pe: parseFloat(r.fwd_pe || r.BEST_PE_RATIO || 0),
+              trail_pe: parseFloat(r.trail_pe || r.PE_RATIO || 0),
+              fwd_ev_ebitda: parseFloat(r.fwd_ev_ebitda || r.BEST_EV_TO_EBITDA || 0),
+              pb: parseFloat(r.pb || r.PX_TO_BOOK_RATIO || 0),
+              ev_sales: parseFloat(r.ev_sales || r.BEST_EV_TO_BEST_SALES || 0),
+              roe_pct: parseFloat(r.roe_pct || r.RETURN_COM_EQY || 0),
+              op_margin_pct: parseFloat(r.op_margin_pct || r.OPER_MARGIN || 0),
+              net_margin_pct: parseFloat(r.net_margin_pct || r.PROF_MARGIN || 0),
+              fcf_per_sh: parseFloat(r.fcf_per_sh || r.CF_FREE_CASH_FLOW_PER_SH || 0),
+              chg_52w_pct: parseFloat(r.chg_52w_pct || r.CHG_PCT_52WK || 0),
+              eps_rev_3m_pct: parseFloat(r.eps_rev_3m_pct || r.BEST_EPS_3MO_PCT_CHG || 0),
+              beta: parseFloat(r.beta || r.EQY_BETA || 0),
+              nd_ebitda: parseFloat(r.nd_ebitda || r.TOT_DEBT_TO_EBITDA || 0),
+              div_yield_pct: parseFloat(r.div_yield_pct || r.EQY_DVD_YLD_IND || 0),
+            };
+
+            /* Match to operators */
+            const normBbg = normTicker(bbg);
+            const directMatch = tickerMap[normBbg];
+            row.matched_ops = directMatch ? [directMatch.opId] : matchOperators(row);
+            row.matched_ticker = directMatch?.ticker || null;
+            row.is_direct_match = !!directMatch;
+
+            return row;
+          })
+          .filter(r => r.price > 0);
+
+        /* Apply $1bn filter */
+        const filtered = parsed.filter(r => !r.mkt_cap_m || r.mkt_cap_m >= 1000);
+
+        /* Update operator stock prices from direct matches */
+        let priceUpdates = 0;
+        const priceMap = {};
+        filtered.forEach(r => {
+          if (r.is_direct_match && r.matched_ticker) {
+            priceMap[r.matched_ticker] = r.price;
+            priceUpdates++;
+          }
+        });
+
+        const snapDate = new Date().toISOString().slice(0,10);
+        const newSnap = {
+          date: snapDate,
+          fileName: file.name,
+          totalParsed: parsed.length,
+          totalFiltered: filtered.length,
+          priceUpdates,
+          priceMap,
+          universe: filtered,
+        };
+
+        setSnapData(newSnap);
+        LS.set('xa_snap_v3', newSnap);
+        setParsing(false);
+      } catch(err) {
+        setError('Parse error: ' + err.message);
+        setParsing(false);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files[0]) parseFile(e.dataTransfer.files[0]); };
+  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
+  const handleDragLeave = () => setDragOver(false);
+  const handleClick = () => fileRef.current?.click();
+  const handleFileInput = (e) => { if (e.target.files[0]) parseFile(e.target.files[0]); };
+  const clearSnap = () => { if(confirm('Clear universe data?')){ setSnapData(null); localStorage.removeItem('xa_snap_v3'); }};
+
+  /* Coverage stats per operator */
+  const opCoverage = useMemo(() => {
+    if (!snapData?.universe) return {};
+    const cov = {};
+    operators.forEach(op => { cov[op.id] = { total: 0, matched: 0, names: [] }; });
+    snapData.universe.forEach(r => {
+      r.matched_ops.forEach(opId => {
+        if (cov[opId]) { cov[opId].total++; cov[opId].names.push(r); }
+        if (r.is_direct_match && cov[opId]) cov[opId].matched++;
+      });
+    });
+    return cov;
+  }, [snapData, operators]);
+
+  /* Filtered + sorted universe for table */
+  const displayData = useMemo(() => {
+    if (!snapData?.universe) return [];
+    let d = [...snapData.universe];
+    if (opFilter !== 'all') d = d.filter(r => r.matched_ops.includes(opFilter));
+    if (searchQ) { const q = searchQ.toLowerCase(); d = d.filter(r => r.name.toLowerCase().includes(q) || r.bbg_ticker.toLowerCase().includes(q) || r.country.toLowerCase().includes(q)); }
+    d.sort((a,b) => {
+      const av = a[sortCol] || 0, bv = b[sortCol] || 0;
+      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir === 'asc' ? av - bv : bv - av;
+    });
+    return d.slice(0, 200); /* Cap display at 200 for performance */
+  }, [snapData, opFilter, searchQ, sortCol, sortDir]);
+
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('desc'); }
+  };
+
+  const fmt = (v, dp=1) => v ? (typeof v === 'number' ? v.toFixed(dp) : v) : '—';
+  const fmtK = (v) => v >= 1e6 ? (v/1e6).toFixed(0)+'T' : v >= 1e3 ? (v/1e3).toFixed(0)+'B' : v ? v.toFixed(0)+'M' : '—';
+
+  return <div style={{padding:32,maxWidth:1400,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400,marginBottom:6}}>Data Hub</h1>
+    <p style={{fontSize:12,color:'var(--fg4)',marginBottom:28}}>Bloomberg universe upload · Friday COB snap · Operator screening</p>
+
+    {/* Upload zone */}
+    <div
+      onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onClick={handleClick}
+      style={{
+        border: `2px dashed ${dragOver ? 'var(--g)' : 'var(--border2)'}`,
+        borderRadius: 8, padding: 40, textAlign: 'center', cursor: 'pointer',
+        background: dragOver ? 'rgba(0,230,118,.04)' : 'var(--bg1)',
+        transition: 'all .2s', marginBottom: 24,
+      }}>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileInput} style={{display:'none'}}/>
+      {parsing ? <div style={{color:'var(--y)',fontFamily:'var(--mono)',fontSize:13}}>⏳ Parsing universe...</div> :
+        <div>
+          <div style={{fontSize:28,marginBottom:8}}>{dragOver ? '📥' : '📊'}</div>
+          <div style={{fontSize:13,color:'var(--fg)',fontFamily:'var(--mono)',marginBottom:4}}>Drop xa_universe_YYYYMMDD.xlsx here</div>
+          <div style={{fontSize:11,color:'var(--fg4)'}}>or click to browse · Reads "Upload" sheet · Friday COB only</div>
+        </div>
+      }
+    </div>
+    {error && <div style={{padding:'10px 16px',background:'rgba(255,61,113,.1)',border:'1px solid rgba(255,61,113,.3)',borderRadius:6,color:'var(--r)',fontSize:12,fontFamily:'var(--mono)',marginBottom:16}}>{error}</div>}
+
+    {/* Snap status */}
+    {snapData && <div style={{background:'var(--bg1)',border:'1px solid var(--border2)',borderRadius:8,padding:20,marginBottom:24}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:8,height:8,borderRadius:'50%',background:'var(--g)',boxShadow:'0 0 8px var(--g)'}}/>
+          <span style={{fontSize:13,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)'}}>Universe Loaded</span>
+        </div>
+        <button onClick={clearSnap} style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',background:'transparent',border:'1px solid var(--border)',borderRadius:3,padding:'3px 8px',cursor:'pointer'}}>Clear</button>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:20}}>
+        {[
+          ['File', snapData.fileName, 'var(--fg3)'],
+          ['Names', snapData.totalFiltered.toLocaleString() + ' (>$1bn)', 'var(--b)'],
+          ['Raw Parsed', snapData.totalParsed.toLocaleString(), 'var(--fg3)'],
+          ['Price Matches', snapData.priceUpdates + ' / ' + operators.reduce((a,o)=>a+o.stocks.length,0), 'var(--g)'],
+          ['Snap Date', snapData.date, 'var(--y)'],
+        ].map(([l,v,c],i) => <div key={i} style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+          <div style={{fontSize:9,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:4}}>{l}</div>
+          <div style={{fontSize:14,fontWeight:600,color:c,fontFamily:'var(--mono)'}}>{v}</div>
+        </div>)}
+      </div>
+
+      {/* Operator coverage grid */}
+      <div style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:10}}>Operator Coverage</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8,marginBottom:8}}>
+        {operators.map(op => {
+          const cov = opCoverage[op.id] || {total:0, matched:0};
+          return <div key={op.id} style={{background:'var(--bg2)',borderRadius:6,padding:'10px 12px',borderLeft:`3px solid ${op.color}`}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <span style={{fontSize:11,fontWeight:700,color:op.color,fontFamily:'var(--mono)'}}>{op.icon} {op.name}</span>
+              <span style={{fontSize:10,color:'var(--fg3)',fontFamily:'var(--mono)'}}>{cov.total} names</span>
+            </div>
+            <div style={{display:'flex',gap:8,fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>
+              <span>📌 {cov.matched} matched</span>
+              <span>🔍 {cov.total - cov.matched} screened</span>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+
+    {/* Universe browser */}
+    {snapData?.universe?.length > 0 && <div style={{background:'var(--bg1)',border:'1px solid var(--border2)',borderRadius:8,overflow:'hidden'}}>
+      <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
+        <div style={{fontSize:13,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)'}}>Universe Browser</div>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search name / ticker / country..."
+            style={{padding:'5px 10px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',width:220}}/>
+          <select value={opFilter} onChange={e=>setOpFilter(e.target.value)}
+            style={{padding:'5px 10px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
+            <option value="all">All Operators</option>
+            {operators.map(o => <option key={o.id} value={o.id}>{o.icon} {o.name} ({(opCoverage[o.id]||{total:0}).total})</option>)}
+          </select>
+          <span style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{displayData.length}{displayData.length>=200?'+':''} shown</span>
+        </div>
+      </div>
+
+      <div style={{overflowX:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:10,fontFamily:'var(--mono)'}}>
+          <thead>
+            <tr style={{background:'var(--bg2)'}}>
+              {[
+                ['bbg_ticker','Ticker',90],['name','Name',160],['country','Cty',42],['gics_sector','Sector',120],
+                ['ccy','Ccy',38],['mkt_cap_m','Mkt Cap',80],['price','Price',72],
+                ['fwd_pe','Fwd P/E',60],['fwd_ev_ebitda','EV/EB',60],['pb','P/B',50],
+                ['roe_pct','ROE%',55],['op_margin_pct','OpM%',55],['chg_52w_pct','52w%',55],
+                ['eps_rev_3m_pct','EPS Rev',60],['nd_ebitda','ND/EB',55],['div_yield_pct','DY%',50],
+              ].map(([col,label,w]) => <th key={col} onClick={()=>toggleSort(col)} style={{
+                padding:'8px 6px',textAlign:col==='name'||col==='gics_sector'?'left':'right',
+                color:sortCol===col?'var(--g)':'var(--fg4)',cursor:'pointer',borderBottom:'1px solid var(--border)',
+                fontWeight:700,fontSize:9,letterSpacing:'.04em',whiteSpace:'nowrap',minWidth:w,
+              }}>{label} {sortCol===col?(sortDir==='asc'?'↑':'↓'):''}</th>)}
+              <th style={{padding:'8px 6px',textAlign:'center',color:'var(--fg4)',borderBottom:'1px solid var(--border)',fontSize:9,fontWeight:700,minWidth:100}}>Operators</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayData.map((r,i) => <tr key={i} style={{borderBottom:'1px solid var(--border)',background:r.is_direct_match?'rgba(0,230,118,.03)':'transparent'}}>
+              <td style={{padding:'6px',color:r.is_direct_match?'var(--g)':'var(--fg2)',fontWeight:r.is_direct_match?700:400}}>{r.bbg_ticker}</td>
+              <td style={{padding:'6px',color:'var(--fg)',textAlign:'left',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.country}</td>
+              <td style={{padding:'6px',textAlign:'left',color:'var(--fg4)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.gics_sector}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg4)'}}>{r.ccy}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{fmtK(r.mkt_cap_m)}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg)',fontWeight:600}}>{fmt(r.price,2)}</td>
+              <td style={{padding:'6px',textAlign:'right',color:r.fwd_pe>0&&r.fwd_pe<15?'var(--g)':r.fwd_pe>40?'var(--r)':'var(--fg3)'}}>{r.fwd_pe?fmt(r.fwd_pe)+'x':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.fwd_ev_ebitda?fmt(r.fwd_ev_ebitda)+'x':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.pb?fmt(r.pb)+'x':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:r.roe_pct>15?'var(--g)':'var(--fg3)'}}>{r.roe_pct?fmt(r.roe_pct)+'%':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.op_margin_pct?fmt(r.op_margin_pct)+'%':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:r.chg_52w_pct>20?'var(--g)':r.chg_52w_pct<-20?'var(--r)':'var(--fg3)'}}>{r.chg_52w_pct?fmt(r.chg_52w_pct)+'%':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:r.eps_rev_3m_pct>0?'var(--g)':r.eps_rev_3m_pct<0?'var(--r)':'var(--fg3)'}}>{r.eps_rev_3m_pct?fmt(r.eps_rev_3m_pct)+'%':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:r.nd_ebitda>3?'var(--r)':'var(--fg3)'}}>{r.nd_ebitda?fmt(r.nd_ebitda)+'x':'—'}</td>
+              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.div_yield_pct?fmt(r.div_yield_pct)+'%':'—'}</td>
+              <td style={{padding:'6px',textAlign:'center'}}>
+                {r.matched_ops.map(opId => {
+                  const op = operators.find(o=>o.id===opId);
+                  return op ? <span key={opId} title={op.name} style={{display:'inline-block',fontSize:9,padding:'1px 4px',borderRadius:3,marginRight:2,background:`${op.color}15`,color:op.color,border:`1px solid ${op.color}30`}}>{op.icon}</span> : null;
+                })}
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>}
+  </div>;
+}
+
 /* ═══════════════ EXPORT ═══════════════ */
 function ExportView({operators, globalDrivers}) {
   const [scope, setScope] = useState('all');
@@ -730,8 +1092,21 @@ function App() {
   // Build flat global drivers from all operators
   const defaultDrivers = OPERATORS.flatMap(op => op.drivers.map(d => ({...d, opId: op.id})));
   const [globalDrivers, setGlobalDrivers] = useState(() => LS.get('xa_drivers_v2') || defaultDrivers);
+  const [snapData, setSnapData] = useState(() => LS.get('xa_snap_v3') || null);
 
   useEffect(() => { LS.set('xa_drivers_v2', globalDrivers); }, [globalDrivers]);
+
+  /* Apply snap prices to operator stocks */
+  const liveOperators = useMemo(() => {
+    if (!snapData?.priceMap) return OPERATORS;
+    return OPERATORS.map(op => ({
+      ...op,
+      stocks: op.stocks.map(s => ({
+        ...s,
+        currentPrice: snapData.priceMap[s.ticker] || s.currentPrice,
+      }))
+    }));
+  }, [snapData]);
 
   const handleReset = () => {
     if (confirm('Reset all macro signals to defaults?')) {
@@ -741,15 +1116,17 @@ function App() {
   };
 
   let content;
-  if (view === 'overview') content = <OverviewView operators={OPERATORS} globalDrivers={globalDrivers}/>;
-  else if (view === 'macro') content = <MacroView operators={OPERATORS} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
-  else if (view === 'operators') content = <OperatorsView operators={OPERATORS} globalDrivers={globalDrivers}/>;
-  else if (view === 'export') content = <ExportView operators={OPERATORS} globalDrivers={globalDrivers}/>;
+  if (view === 'overview') content = <OverviewView operators={liveOperators} globalDrivers={globalDrivers}/>;
+  else if (view === 'macro') content = <MacroView operators={liveOperators} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
+  else if (view === 'operators') content = <OperatorsView operators={liveOperators} globalDrivers={globalDrivers}/>;
+  else if (view === 'data') content = <DataView operators={liveOperators} globalDrivers={globalDrivers} snapData={snapData} setSnapData={setSnapData}/>;
+  else if (view === 'export') content = <ExportView operators={liveOperators} globalDrivers={globalDrivers}/>;
 
   return <div style={{display:'flex',flexDirection:'column',height:'100vh'}}>
     <Header view={view} setView={setView}/>
     <div style={{flex:1,overflowY:'auto',position:'relative'}}>
-      <div style={{position:'absolute',top:10,right:16,zIndex:10}}>
+      <div style={{position:'absolute',top:10,right:16,zIndex:10,display:'flex',gap:8,alignItems:'center'}}>
+        {snapData && <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--g)',opacity:.7}}>📊 Snap: {snapData.date}</span>}
         <button onClick={handleReset} title="Reset signals" style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg4)',cursor:'pointer',padding:'4px 8px',fontSize:9,fontFamily:'var(--mono)'}}>Reset Signals</button>
       </div>
       {content}

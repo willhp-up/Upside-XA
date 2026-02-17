@@ -93,11 +93,43 @@ const DEFAULT_GLOBAL_DRIVERS=[
   {id:"geopol",label:"Geopolitical Escalation",description:"Ukraine, Taiwan, Middle East driving urgency",signal:0.5,category:"geo"},
   {id:"autonomy",label:"EU Strategic Autonomy",description:"European defence sovereignty reducing US dependency",signal:0.6,category:"geo"},
   {id:"supply",label:"Supply Chain Capacity",description:"Industrial base constraints creating pricing power",signal:0.3,category:"sector"},
+  /* TANTO — Energy */
+  {id:"t_oilprice",label:"Oil Price Trajectory",description:"Crude direction impacts E&P margins and capital returns",signal:-0.2,category:"macro"},
+  {id:"t_opec",label:"OPEC+ Discipline",description:"Cartel cohesion driving supply management",signal:0.3,category:"macro"},
+  {id:"t_transition",label:"Energy Transition",description:"Renewable capex creating integrated major optionality",signal:0.4,category:"sector"},
+  {id:"t_rates",label:"Interest Rates (Energy)",description:"Rate impact on leveraged E&P and capex decisions",signal:-0.3,category:"macro"},
+  {id:"t_china",label:"China Demand",description:"Chinese economic recovery driving marginal barrel demand",signal:-0.2,category:"macro"},
+  {id:"t_capex",label:"Capex Discipline",description:"Capital allocation restraint supporting FCF and returns",signal:0.5,category:"sector"},
+  /* JACK — AI & Semiconductors */
+  {id:"j_aicapex",label:"AI Capex Momentum",description:"Hyperscaler spending on AI infrastructure",signal:0.7,category:"sector"},
+  {id:"j_china",label:"China/Export Controls",description:"Export restrictions reshaping semiconductor supply chains",signal:-0.3,category:"geo"},
+  {id:"j_rates",label:"Rates & Multiples",description:"Rate trajectory impacting growth stock valuations",signal:-0.2,category:"macro"},
+  {id:"j_consumer",label:"Consumer Demand (Tech)",description:"End-market demand for devices and computing",signal:0.3,category:"macro"},
+  {id:"j_foundry",label:"Foundry/Supply Chain",description:"Fab capacity constraints and node leadership",signal:0.4,category:"sector"},
+  {id:"j_regulation",label:"AI Regulation Risk",description:"Government oversight of AI development and deployment",signal:-0.1,category:"geo"},
+  /* BOON — Fintech & Payments */
+  {id:"b_digital",label:"Digital Payment Shift",description:"Secular cash-to-digital conversion globally",signal:0.6,category:"sector"},
+  {id:"b_rates",label:"Rate Environment (Fin)",description:"Interest rate impact on fintech net interest margins",signal:-0.3,category:"macro"},
+  {id:"b_consumer",label:"Consumer Spend",description:"Consumer spending resilience driving transaction volumes",signal:0.3,category:"macro"},
+  {id:"b_regulation",label:"Regulatory/Cap Risk",description:"Credit card fee caps and fintech regulation",signal:-0.4,category:"geo"},
+  {id:"b_crypto",label:"Crypto/DeFi Momentum",description:"Digital asset adoption driving infrastructure demand",signal:0.2,category:"sector"},
+  {id:"b_em",label:"EM Fintech Growth",description:"Emerging market financial inclusion opportunity",signal:0.5,category:"sector"},
+  /* OZ — Healthcare & Biotech */
+  {id:"o_glp1",label:"GLP-1/Obesity Momentum",description:"Obesity drug revolution reshaping healthcare",signal:0.6,category:"sector"},
+  {id:"o_pipeline",label:"Pipeline/FDA Catalysts",description:"Drug approval pipeline and regulatory momentum",signal:0.4,category:"sector"},
+  {id:"o_pricing",label:"Drug Pricing Pressure",description:"Government and PBM pricing pressure on pharma",signal:-0.4,category:"geo"},
+  {id:"o_rates",label:"Rate Environment (HC)",description:"Rate impact on biotech valuations and M&A",signal:-0.2,category:"macro"},
+  {id:"o_ma",label:"M&A / Dealmaking",description:"Pharma acquisition cycle and strategic dealmaking",signal:0.3,category:"sector"},
+  {id:"o_aging",label:"Demographics/Aging",description:"Aging population driving structural healthcare demand",signal:0.5,category:"macro"},
 ];
 
 const DEFAULT_TEAMS=[
   {id:"travel",name:"Travel",color:"#00e676",icon:"✈"},
   {id:"defence",name:"Defence",color:"#40c4ff",icon:"🛡"},
+  {id:"energy",name:"Energy",color:"#f59e0b",icon:"🛢"},
+  {id:"semiconductors",name:"AI & Semiconductors",color:"#818cf8",icon:"🧠"},
+  {id:"fintech",name:"Fintech & Payments",color:"#34d399",icon:"💳"},
+  {id:"healthcare",name:"Healthcare & Biotech",color:"#f472b6",icon:"🧬"},
   {id:"tech",name:"Tech & Robotics",color:"#b388ff",icon:"🤖"},
 ];
 
@@ -108,6 +140,23 @@ const TIG_DRIVER_MAP=[
 const RONE_DRIVER_MAP=[
   {driverId:"nato",weight:30},{driverId:"geopol",weight:25},{driverId:"autonomy",weight:15},
   {driverId:"rates",weight:10},{driverId:"supply",weight:10},{driverId:"oil",weight:10},
+];
+
+const TANTO_DRIVER_MAP=[
+  {driverId:"t_oilprice",weight:30},{driverId:"t_opec",weight:20},{driverId:"t_transition",weight:15},
+  {driverId:"t_rates",weight:10},{driverId:"t_china",weight:15},{driverId:"t_capex",weight:10},
+];
+const JACK_DRIVER_MAP=[
+  {driverId:"j_aicapex",weight:30},{driverId:"j_china",weight:20},{driverId:"j_rates",weight:15},
+  {driverId:"j_consumer",weight:10},{driverId:"j_foundry",weight:15},{driverId:"j_regulation",weight:10},
+];
+const BOON_DRIVER_MAP=[
+  {driverId:"b_digital",weight:25},{driverId:"b_rates",weight:20},{driverId:"b_consumer",weight:20},
+  {driverId:"b_regulation",weight:15},{driverId:"b_crypto",weight:10},{driverId:"b_em",weight:10},
+];
+const OZ_DRIVER_MAP=[
+  {driverId:"o_glp1",weight:25},{driverId:"o_pipeline",weight:20},{driverId:"o_pricing",weight:20},
+  {driverId:"o_rates",weight:10},{driverId:"o_ma",weight:15},{driverId:"o_aging",weight:10},
 ];
 
 const TIG_STOCKS=[
@@ -144,9 +193,77 @@ const RONE_STOCKS=[
   {ticker:"CHG.L",name:"Chemring",sector:"Munitions",verdict:"short",currentPrice:500,prices:[320,380,440,510,580,660,780],sens:{nato:.4,geopol:.3,autonomy:.2,rates:-.3,supply:-.5,oil:0},thesis:"Munitions play but smaller scale. Execution risk.",metrics:{mkt_cap:2100,pe_fwd:20.1,oper_margin:12.2,fcf_yield:3.5,net_debt_ebitda:0.8}},
 ];
 
+const TANTO_STOCKS=[
+  {ticker:"SHEL",name:"Shell",sector:"Integrated",verdict:"long",currentPrice:78,prices:[48,58,68,85,98,115,140],sens:{t_oilprice:.7,t_opec:.6,t_transition:-.3,t_rates:-.2,t_china:.5,t_capex:.7},thesis:"Transition optionality. LNG leadership. Strong buyback.",metrics:{mkt_cap:220000,pe_fwd:9.2,oper_margin:12.4,fcf_yield:8.5,net_debt_ebitda:0.3}},
+  {ticker:"XOM",name:"ExxonMobil",sector:"Integrated",verdict:"long",currentPrice:149,prices:[95,115,132,160,182,210,250],sens:{t_oilprice:.8,t_opec:.5,t_transition:-.4,t_rates:-.1,t_china:.4,t_capex:.8},thesis:"Permian dominance. Pioneer acquisition. Capital returns machine.",metrics:{mkt_cap:490000,pe_fwd:13.5,oper_margin:14.8,fcf_yield:7.2,net_debt_ebitda:0.5}},
+  {ticker:"CVX",name:"Chevron",sector:"Integrated",verdict:"long",currentPrice:184,prices:[115,140,162,195,225,260,310],sens:{t_oilprice:.7,t_opec:.5,t_transition:-.3,t_rates:-.2,t_china:.4,t_capex:.9},thesis:"Hess acquisition. Permian + Guyana. Capex discipline leader.",metrics:{mkt_cap:330000,pe_fwd:14.2,oper_margin:13.1,fcf_yield:6.8,net_debt_ebitda:0.6}},
+  {ticker:"TTE",name:"TotalEnergies",sector:"Integrated",verdict:"long",currentPrice:77,prices:[45,55,66,82,96,115,140],sens:{t_oilprice:.6,t_opec:.5,t_transition:.2,t_rates:-.2,t_china:.5,t_capex:.6},thesis:"Best-in-class transition strategy. LNG + renewables. European discount.",metrics:{mkt_cap:152000,pe_fwd:8.1,oper_margin:11.2,fcf_yield:9.1,net_debt_ebitda:0.4}},
+  {ticker:"EQNR",name:"Equinor",sector:"Integrated",verdict:"long",currentPrice:28,prices:[16,20,24,30,36,43,52],sens:{t_oilprice:.8,t_opec:.6,t_transition:.3,t_rates:-.1,t_china:.3,t_capex:.5},thesis:"Norwegian state oil. Offshore wind leader. Low breakeven.",metrics:{mkt_cap:85000,pe_fwd:10.5,oper_margin:28.3,fcf_yield:10.2,net_debt_ebitda:0.1}},
+  {ticker:"CNQ",name:"Canadian Natural",sector:"Producer",verdict:"long",currentPrice:28,prices:[15,19,23,30,36,44,55],sens:{t_oilprice:.9,t_opec:.4,t_transition:-.5,t_rates:-.3,t_china:.3,t_capex:.8},thesis:"Oil sands. Lowest decline rate in NA. FCF machine.",metrics:{mkt_cap:58000,pe_fwd:11.2,oper_margin:18.5,fcf_yield:8.8,net_debt_ebitda:0.6}},
+  {ticker:"SU",name:"Suncor Energy",sector:"Producer",verdict:"long",currentPrice:55,prices:[32,39,47,59,70,84,105],sens:{t_oilprice:.8,t_opec:.4,t_transition:-.4,t_rates:-.2,t_china:.3,t_capex:.7},thesis:"Integrated oil sands + refining. Self-help story. Buybacks.",metrics:{mkt_cap:68000,pe_fwd:10.8,oper_margin:15.2,fcf_yield:9.5,net_debt_ebitda:0.5}},
+  {ticker:"VET",name:"Vermilion Energy",sector:"Producer",verdict:"long",currentPrice:9.5,prices:[4,5.5,7.5,11,14,18,24],sens:{t_oilprice:.9,t_opec:.5,t_transition:-.6,t_rates:-.4,t_china:.4,t_capex:.6},thesis:"Diversified international E&P. European gas exposure. High leverage upside.",metrics:{mkt_cap:1500,pe_fwd:5.8,oper_margin:22.1,fcf_yield:15.2,net_debt_ebitda:1.8}},
+  {ticker:"BP",name:"BP",sector:"Integrated",verdict:"short",currentPrice:39,prices:[18,24,31,38,48,58,72],sens:{t_oilprice:-.5,t_opec:-.4,t_transition:.3,t_rates:.3,t_china:-.3,t_capex:-.7},thesis:"Strategy confusion. Transition flip-flop. Weak FCF vs peers.",metrics:{mkt_cap:85000,pe_fwd:7.5,oper_margin:5.8,fcf_yield:4.2,net_debt_ebitda:1.2}},
+  {ticker:"OXY",name:"Occidental",sector:"Producer",verdict:"short",currentPrice:46,prices:[22,30,38,48,56,66,80],sens:{t_oilprice:-.6,t_opec:-.3,t_transition:-.2,t_rates:.2,t_china:-.2,t_capex:-.8},thesis:"Buffett overhang. CrownRock leverage. Carbon capture unproven.",metrics:{mkt_cap:38000,pe_fwd:15.2,oper_margin:8.5,fcf_yield:5.1,net_debt_ebitda:2.1}},
+  {ticker:"RIG",name:"Transocean",sector:"Services",verdict:"short",currentPrice:3.8,prices:[1,1.8,2.8,4,5.5,7.5,10],sens:{t_oilprice:-.8,t_opec:-.5,t_transition:-.6,t_rates:.5,t_china:-.4,t_capex:-.5},thesis:"Offshore drilling structural decline. Massive debt. Equity dilution risk.",metrics:{mkt_cap:2800,pe_fwd:0,oper_margin:-2.1,fcf_yield:-5.5,net_debt_ebitda:8.5}},
+  {ticker:"HAL",name:"Halliburton",sector:"Services",verdict:"short",currentPrice:24,prices:[12,16,20,25,30,36,44],sens:{t_oilprice:-.6,t_opec:-.4,t_transition:-.3,t_rates:.2,t_china:-.3,t_capex:-.4},thesis:"OFS cycle peak. NA activity declining. International slower than expected.",metrics:{mkt_cap:21000,pe_fwd:10.2,oper_margin:12.8,fcf_yield:7.5,net_debt_ebitda:1.1}},
+  {ticker:"PBR",name:"Petrobras",sector:"EM Producer",verdict:"short",currentPrice:15,prices:[7,9.5,12.5,15.5,19,23,28],sens:{t_oilprice:-.5,t_opec:-.3,t_transition:-.1,t_rates:.4,t_china:-.5,t_capex:-.3},thesis:"Political interference. Dividend policy uncertainty. EM risk premium.",metrics:{mkt_cap:95000,pe_fwd:5.2,oper_margin:38.5,fcf_yield:12.1,net_debt_ebitda:1.0}},
+];
+
+const JACK_STOCKS=[
+  {ticker:"NVDA",name:"NVIDIA",sector:"AI Compute",verdict:"long",currentPrice:183,prices:[95,125,155,200,240,290,360],sens:{j_aicapex:.9,j_china:-.4,j_rates:-.3,j_consumer:.3,j_foundry:.6,j_regulation:-.4},thesis:"AI compute monopoly. Data centre GPU 80%+ share. Blackwell ramp.",metrics:{mkt_cap:4500000,pe_fwd:35.2,oper_margin:62.1,fcf_yield:2.8,net_debt_ebitda:0.1}},
+  {ticker:"TSM",name:"TSMC",sector:"Foundry",verdict:"long",currentPrice:366,prices:[200,260,320,400,475,560,680],sens:{j_aicapex:.7,j_china:-.6,j_rates:-.2,j_consumer:.4,j_foundry:.9,j_regulation:-.2},thesis:"Foundry monopoly. 2nm sold out. All AI roads lead through TSMC.",metrics:{mkt_cap:950000,pe_fwd:22.5,oper_margin:48.2,fcf_yield:3.2,net_debt_ebitda:0.2}},
+  {ticker:"AVGO",name:"Broadcom",sector:"Custom ASIC",verdict:"long",currentPrice:325,prices:[180,235,285,355,420,500,620],sens:{j_aicapex:.8,j_china:-.3,j_rates:-.3,j_consumer:.2,j_foundry:.5,j_regulation:-.3},thesis:"Custom ASIC for Google/Meta. VMware integration. Diversified moat.",metrics:{mkt_cap:1520000,pe_fwd:30.8,oper_margin:45.5,fcf_yield:3.5,net_debt_ebitda:1.2}},
+  {ticker:"ASML",name:"ASML",sector:"Equipment",verdict:"long",currentPrice:1407,prices:[800,1000,1200,1500,1750,2050,2500],sens:{j_aicapex:.6,j_china:-.5,j_rates:-.3,j_consumer:.2,j_foundry:.8,j_regulation:-.2},thesis:"EUV monopoly. Every advanced chip needs ASML. 2nm tailwind.",metrics:{mkt_cap:570000,pe_fwd:32.1,oper_margin:35.8,fcf_yield:2.5,net_debt_ebitda:0.1}},
+  {ticker:"AMAT",name:"Applied Materials",sector:"Equipment",verdict:"long",currentPrice:180,prices:[105,130,158,195,230,275,340],sens:{j_aicapex:.5,j_china:-.5,j_rates:-.2,j_consumer:.3,j_foundry:.7,j_regulation:-.1},thesis:"Deposition & etch leader. Fab buildout beneficiary. China exposure manageable.",metrics:{mkt_cap:148000,pe_fwd:20.5,oper_margin:29.2,fcf_yield:4.1,net_debt_ebitda:0.3}},
+  {ticker:"MRVL",name:"Marvell Tech",sector:"Custom ASIC",verdict:"long",currentPrice:105,prices:[50,68,88,115,140,175,220],sens:{j_aicapex:.8,j_china:-.2,j_rates:-.4,j_consumer:.2,j_foundry:.4,j_regulation:-.3},thesis:"Custom silicon for cloud. 5G, auto, data centre. AWS/MSFT relationships.",metrics:{mkt_cap:91000,pe_fwd:38.5,oper_margin:18.2,fcf_yield:2.2,net_debt_ebitda:0.8}},
+  {ticker:"ALAB",name:"Astera Labs",sector:"Connectivity",verdict:"long",currentPrice:95,prices:[35,52,72,105,140,185,250],sens:{j_aicapex:.9,j_china:-.1,j_rates:-.5,j_consumer:.1,j_foundry:.5,j_regulation:-.2},thesis:"AI connectivity fabric. PCIe/CXL switches. Pure-play AI infrastructure.",metrics:{mkt_cap:15000,pe_fwd:85.2,oper_margin:22.5,fcf_yield:0.8,net_debt_ebitda:0}},
+  {ticker:"MU",name:"Micron",sector:"Memory",verdict:"long",currentPrice:98,prices:[52,68,82,108,130,160,200],sens:{j_aicapex:.7,j_china:-.3,j_rates:-.3,j_consumer:.5,j_foundry:.6,j_regulation:-.1},thesis:"HBM3e for AI. Memory supercycle. Consolidated industry structure.",metrics:{mkt_cap:108000,pe_fwd:12.8,oper_margin:25.5,fcf_yield:5.2,net_debt_ebitda:0.5}},
+  {ticker:"AMD",name:"AMD",sector:"GPU/CPU",verdict:"short",currentPrice:207,prices:[100,135,175,215,260,310,380],sens:{j_aicapex:-.3,j_china:.2,j_rates:.2,j_consumer:-.2,j_foundry:-.3,j_regulation:.2},thesis:"MI300 losing GPU ground to NVIDIA. CPU margin pressure. Over-hyped AI narrative.",metrics:{mkt_cap:335000,pe_fwd:28.5,oper_margin:22.1,fcf_yield:2.8,net_debt_ebitda:0.3}},
+  {ticker:"INTC",name:"Intel",sector:"Foundry/CPU",verdict:"short",currentPrice:24,prices:[10,14,19,25,32,40,52],sens:{j_aicapex:-.4,j_china:.3,j_rates:.3,j_consumer:-.1,j_foundry:-.6,j_regulation:.1},thesis:"Foundry execution risk. Losing process leadership. Cash burn.",metrics:{mkt_cap:103000,pe_fwd:0,oper_margin:-1.2,fcf_yield:-8.5,net_debt_ebitda:2.8}},
+  {ticker:"QCOM",name:"Qualcomm",sector:"Mobile/Edge",verdict:"short",currentPrice:168,prices:[90,120,148,175,205,240,285],sens:{j_aicapex:-.2,j_china:.4,j_rates:.2,j_consumer:-.4,j_foundry:-.2,j_regulation:.3},thesis:"Mobile maturity. ARM dispute. Edge AI not replacing data centre.",metrics:{mkt_cap:188000,pe_fwd:15.8,oper_margin:28.5,fcf_yield:5.5,net_debt_ebitda:1.1}},
+  {ticker:"ARM",name:"ARM Holdings",sector:"IP/Licensing",verdict:"short",currentPrice:172,prices:[80,110,145,180,220,270,340],sens:{j_aicapex:-.2,j_china:.1,j_rates:.3,j_consumer:-.3,j_foundry:-.2,j_regulation:.4},thesis:"Valuation extreme. Licensing model revenue uncertainty. SoftBank overhang.",metrics:{mkt_cap:178000,pe_fwd:92.5,oper_margin:25.8,fcf_yield:0.8,net_debt_ebitda:0}},
+  {ticker:"SMCI",name:"Super Micro",sector:"Servers",verdict:"short",currentPrice:40,prices:[12,20,30,42,58,78,105],sens:{j_aicapex:-.5,j_china:.2,j_rates:.3,j_consumer:-.1,j_foundry:-.4,j_regulation:.3},thesis:"Accounting issues. 15.5% short interest. Dell/HPE competing. Governance risk.",metrics:{mkt_cap:24000,pe_fwd:12.5,oper_margin:8.2,fcf_yield:-2.5,net_debt_ebitda:0.8}},
+];
+
+const BOON_STOCKS=[
+  {ticker:"V",name:"Visa",sector:"Networks",verdict:"long",currentPrice:340,prices:[220,260,300,365,420,485,570],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.5},thesis:"Network moat. 65%+ operating margins. Cross-border recovery.",metrics:{mkt_cap:580000,pe_fwd:28.5,oper_margin:67.2,fcf_yield:3.8,net_debt_ebitda:0.5}},
+  {ticker:"MA",name:"Mastercard",sector:"Networks",verdict:"long",currentPrice:518,prices:[340,400,465,555,640,740,870],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.6},thesis:"Duopoly network. Services revenue growing. Multi-rail strategy.",metrics:{mkt_cap:475000,pe_fwd:32.1,oper_margin:58.5,fcf_yield:3.2,net_debt_ebitda:0.8}},
+  {ticker:"ADYEN.AS",name:"Adyen",sector:"Processing",verdict:"long",currentPrice:1520,prices:[800,1050,1300,1650,1950,2350,2900],sens:{b_digital:.9,b_rates:-.2,b_consumer:.5,b_regulation:-.3,b_crypto:.2,b_em:.7},thesis:"Unified commerce. Enterprise processor. Take rate expansion.",metrics:{mkt_cap:48000,pe_fwd:52.5,oper_margin:46.2,fcf_yield:1.8,net_debt_ebitda:0}},
+  {ticker:"SOFI",name:"SoFi Technologies",sector:"Neobank",verdict:"long",currentPrice:19.7,prices:[8,12,16,22,28,36,48],sens:{b_digital:.6,b_rates:-.6,b_consumer:.4,b_regulation:-.2,b_crypto:.5,b_em:.3},thesis:"Bank charter. Student loans + investing + banking. Path to profitability.",metrics:{mkt_cap:22000,pe_fwd:48.5,oper_margin:5.2,fcf_yield:1.5,net_debt_ebitda:2.5}},
+  {ticker:"MELI",name:"MercadoLibre",sector:"EM Payments",verdict:"long",currentPrice:2050,prices:[1100,1400,1750,2200,2650,3200,4000],sens:{b_digital:.7,b_rates:-.3,b_consumer:.5,b_regulation:-.2,b_crypto:.4,b_em:.9},thesis:"LatAm fintech + ecommerce. Mercado Pago dominance. Financial inclusion.",metrics:{mkt_cap:106000,pe_fwd:42.5,oper_margin:14.8,fcf_yield:2.2,net_debt_ebitda:0.3}},
+  {ticker:"COIN",name:"Coinbase",sector:"Crypto Infra",verdict:"long",currentPrice:265,prices:[100,155,215,290,380,500,680],sens:{b_digital:.3,b_rates:-.4,b_consumer:.2,b_regulation:-.3,b_crypto:.9,b_em:.2},thesis:"Crypto infrastructure. Base L2. Institutional custody. Regulatory clarity beneficiary.",metrics:{mkt_cap:68000,pe_fwd:28.5,oper_margin:22.5,fcf_yield:3.5,net_debt_ebitda:0.2}},
+  {ticker:"AFRM",name:"Affirm",sector:"BNPL",verdict:"long",currentPrice:62,prices:[22,35,48,68,90,120,165],sens:{b_digital:.7,b_rates:-.7,b_consumer:.6,b_regulation:-.4,b_crypto:.3,b_em:.4},thesis:"BNPL leader. Amazon partnership. Credit performance improving.",metrics:{mkt_cap:20000,pe_fwd:0,oper_margin:-5.2,fcf_yield:-2.1,net_debt_ebitda:3.5}},
+  {ticker:"NU",name:"Nu Holdings",sector:"EM Neobank",verdict:"long",currentPrice:12.5,prices:[5.5,7.5,10,13.5,17,22,29],sens:{b_digital:.7,b_rates:-.4,b_consumer:.5,b_regulation:-.2,b_crypto:.3,b_em:.8},thesis:"Brazil + LatAm neobank. 100M+ customers. NIM expansion.",metrics:{mkt_cap:58000,pe_fwd:28.2,oper_margin:18.5,fcf_yield:2.8,net_debt_ebitda:0}},
+  {ticker:"PYPL",name:"PayPal",sector:"Digital Wallet",verdict:"short",currentPrice:40,prices:[18,25,33,42,52,64,80],sens:{b_digital:-.3,b_rates:.2,b_consumer:-.2,b_regulation:.3,b_crypto:-.1,b_em:-.2},thesis:"CEO change. Market share loss. Venmo monetisation struggles. Down from $79 high.",metrics:{mkt_cap:42000,pe_fwd:10.5,oper_margin:15.8,fcf_yield:8.5,net_debt_ebitda:0.5}},
+  {ticker:"XYZ",name:"Block (Square)",sector:"Payments",verdict:"short",currentPrice:72,prices:[32,45,58,75,92,115,145],sens:{b_digital:-.2,b_rates:.1,b_consumer:-.3,b_regulation:.2,b_crypto:.4,b_em:-.1},thesis:"Cash App growth slowing. Square ecosystem fragmented. Bitcoin exposure volatile.",metrics:{mkt_cap:44000,pe_fwd:22.5,oper_margin:5.8,fcf_yield:3.2,net_debt_ebitda:1.2}},
+  {ticker:"FIS",name:"Fidelity Nat'l Info",sector:"Legacy Infra",verdict:"short",currentPrice:78,prices:[45,55,66,80,92,108,128],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.1,b_regulation:.4,b_crypto:-.2,b_em:-.3},thesis:"Legacy bank tech. Worldpay separation overhang. Disruption target.",metrics:{mkt_cap:42000,pe_fwd:12.8,oper_margin:22.5,fcf_yield:5.5,net_debt_ebitda:2.1}},
+  {ticker:"GPN",name:"Global Payments",sector:"Legacy Infra",verdict:"short",currentPrice:95,prices:[52,65,80,98,115,135,160],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.2,b_regulation:.4,b_crypto:-.1,b_em:-.3},thesis:"Legacy merchant acquiring. Integration complexity. Stripe/Adyen eating share.",metrics:{mkt_cap:25000,pe_fwd:9.8,oper_margin:18.2,fcf_yield:6.8,net_debt_ebitda:2.8}},
+  {ticker:"WU",name:"Western Union",sector:"Remittance",verdict:"short",currentPrice:11,prices:[5,6.5,8.5,11,14,17,21],sens:{b_digital:-.8,b_rates:.2,b_consumer:-.3,b_regulation:.3,b_crypto:-.2,b_em:-.7},thesis:"Remittance dying. Wise/Remitly disrupting. Structural decline.",metrics:{mkt_cap:3800,pe_fwd:6.2,oper_margin:18.5,fcf_yield:12.2,net_debt_ebitda:2.5}},
+];
+
+const OZ_STOCKS=[
+  {ticker:"LLY",name:"Eli Lilly",sector:"GLP-1 Leader",verdict:"long",currentPrice:920,prices:[580,680,800,985,1150,1350,1600],sens:{o_glp1:.9,o_pipeline:.7,o_pricing:-.4,o_rates:-.2,o_ma:.3,o_aging:.6},thesis:"GLP-1 king. Mounjaro + Zepbound. Pipeline depth across obesity, Alzheimer's.",metrics:{mkt_cap:870000,pe_fwd:55.2,oper_margin:32.5,fcf_yield:1.8,net_debt_ebitda:1.2}},
+  {ticker:"ISRG",name:"Intuitive Surgical",sector:"Robotics",verdict:"long",currentPrice:580,prices:[340,410,500,625,740,880,1050],sens:{o_glp1:.2,o_pipeline:.5,o_pricing:-.2,o_rates:-.3,o_ma:.4,o_aging:.8},thesis:"da Vinci monopoly. Ion lung biopsy. Procedure volume growth secular.",metrics:{mkt_cap:208000,pe_fwd:62.5,oper_margin:32.8,fcf_yield:1.5,net_debt_ebitda:0}},
+  {ticker:"VRTX",name:"Vertex Pharma",sector:"Rare Disease",verdict:"long",currentPrice:455,prices:[280,340,400,490,570,670,800],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.2,o_ma:.5,o_aging:.4},thesis:"CF monopoly. Pain pipeline. Casgevy gene therapy. Diversifying.",metrics:{mkt_cap:118000,pe_fwd:28.5,oper_margin:42.5,fcf_yield:3.2,net_debt_ebitda:0.1}},
+  {ticker:"REGN",name:"Regeneron",sector:"Biologics",verdict:"long",currentPrice:710,prices:[440,530,630,760,880,1030,1220],sens:{o_glp1:.2,o_pipeline:.7,o_pricing:-.3,o_rates:-.1,o_ma:.4,o_aging:.5},thesis:"Dupixent blockbuster. Eylea franchise. R&D machine with Libtayo.",metrics:{mkt_cap:78000,pe_fwd:22.8,oper_margin:35.2,fcf_yield:4.5,net_debt_ebitda:0}},
+  {ticker:"TMO",name:"Thermo Fisher",sector:"Life Sciences",verdict:"long",currentPrice:540,prices:[340,410,480,575,665,780,920],sens:{o_glp1:.3,o_pipeline:.4,o_pricing:-.1,o_rates:-.3,o_ma:.6,o_aging:.6},thesis:"Life sciences picks and shovels. M&A roll-up. Biopharma recovery.",metrics:{mkt_cap:205000,pe_fwd:25.5,oper_margin:22.8,fcf_yield:3.8,net_debt_ebitda:2.1}},
+  {ticker:"DXCM",name:"DexCom",sector:"MedTech/CGM",verdict:"long",currentPrice:82,prices:[38,52,68,90,115,145,185],sens:{o_glp1:.7,o_pipeline:.5,o_pricing:-.3,o_rates:-.4,o_ma:.3,o_aging:.7},thesis:"CGM for obesity management. Stelo OTC expansion. GLP-1 companion device.",metrics:{mkt_cap:32000,pe_fwd:42.5,oper_margin:18.5,fcf_yield:2.2,net_debt_ebitda:1.5}},
+  {ticker:"ARGX",name:"argenx",sector:"Biotech",verdict:"long",currentPrice:680,prices:[350,450,570,730,880,1060,1300],sens:{o_glp1:.1,o_pipeline:.9,o_pricing:-.2,o_rates:-.3,o_ma:.6,o_aging:.3},thesis:"Vyvgart blockbuster. Autoimmune pipeline. Best-in-class FcRn.",metrics:{mkt_cap:42000,pe_fwd:45.2,oper_margin:15.8,fcf_yield:1.2,net_debt_ebitda:0}},
+  {ticker:"ALNY",name:"Alnylam Pharma",sector:"RNAi",verdict:"long",currentPrice:265,prices:[130,175,225,290,355,430,530],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.3,o_ma:.5,o_aging:.4},thesis:"RNAi platform. Amvuttra + Onpattro. Cardio pipeline catalyst.",metrics:{mkt_cap:35000,pe_fwd:0,oper_margin:-8.5,fcf_yield:-3.2,net_debt_ebitda:1.8}},
+  {ticker:"NVO",name:"Novo Nordisk",sector:"GLP-1/Pricing",verdict:"short",currentPrice:50,prices:[25,32,40,52,65,82,105],sens:{o_glp1:-.4,o_pipeline:-.3,o_pricing:.5,o_rates:.2,o_ma:-.2,o_aging:-.1},thesis:"Down 40% YoY. 2026 guidance -5% to -13% sales. CagriSema Phase 3 miss. Pricing pressure.",metrics:{mkt_cap:230000,pe_fwd:18.5,oper_margin:42.5,fcf_yield:5.2,net_debt_ebitda:0.5}},
+  {ticker:"UNH",name:"UnitedHealth",sector:"Managed Care",verdict:"short",currentPrice:470,prices:[280,340,410,485,560,640,740],sens:{o_glp1:-.3,o_pipeline:-.1,o_pricing:.6,o_rates:.3,o_ma:-.2,o_aging:.3},thesis:"Down 35% since Jan. DOJ investigation. GLP-1 cost headwinds. Optum scrutiny.",metrics:{mkt_cap:430000,pe_fwd:16.5,oper_margin:8.5,fcf_yield:4.8,net_debt_ebitda:1.5}},
+  {ticker:"PFE",name:"Pfizer",sector:"Big Pharma",verdict:"short",currentPrice:26,prices:[14,18,22,27,32,38,46],sens:{o_glp1:-.2,o_pipeline:-.4,o_pricing:.4,o_rates:.3,o_ma:-.3,o_aging:-.2},thesis:"Post-COVID cliff. Patent expirations. Pipeline gaps. Seagen integration uncertain.",metrics:{mkt_cap:148000,pe_fwd:10.2,oper_margin:12.5,fcf_yield:6.8,net_debt_ebitda:2.5}},
+  {ticker:"MRNA",name:"Moderna",sector:"mRNA Platform",verdict:"short",currentPrice:32,prices:[12,18,25,34,48,68,95],sens:{o_glp1:-.1,o_pipeline:-.5,o_pricing:.3,o_rates:.4,o_ma:-.2,o_aging:-.3},thesis:"9.5% short interest. mRNA pipeline beyond COVID uncertain. Cash burn.",metrics:{mkt_cap:12500,pe_fwd:0,oper_margin:-55.2,fcf_yield:-18.5,net_debt_ebitda:0}},
+  {ticker:"CVS",name:"CVS Health",sector:"Pharmacy/PBM",verdict:"short",currentPrice:56,prices:[32,40,48,58,68,80,95],sens:{o_glp1:-.2,o_pipeline:-.1,o_pricing:.6,o_rates:.2,o_ma:-.3,o_aging:.2},thesis:"PBM reform risk. Pharmacy margin pressure. Aetna integration drag.",metrics:{mkt_cap:72000,pe_fwd:8.5,oper_margin:4.2,fcf_yield:8.2,net_debt_ebitda:3.2}},
+];
+
 const DEFAULT_MODELS=[
   {id:"tig",name:"Tig",teamId:"travel",type:"internal",description:"K-shape travel divergence. 7-scenario probability engine.",created:"2025-02-16",driverMap:TIG_DRIVER_MAP,stocks:TIG_STOCKS},
   {id:"rone",name:"Rone",teamId:"defence",type:"internal",description:"NATO rearmament supercycle. 7-scenario probability engine.",created:"2025-02-16",driverMap:RONE_DRIVER_MAP,stocks:RONE_STOCKS},
+  {id:"tanto",name:"Tanto",teamId:"energy",type:"internal",description:"Energy transition divergence. Capex discipline vs commodity trap.",created:"2025-02-17",driverMap:TANTO_DRIVER_MAP,stocks:TANTO_STOCKS},
+  {id:"jack",name:"Jack",teamId:"semiconductors",type:"internal",description:"AI capex supercycle. Infrastructure winners vs share losers.",created:"2025-02-17",driverMap:JACK_DRIVER_MAP,stocks:JACK_STOCKS},
+  {id:"boon",name:"Boon",teamId:"fintech",type:"internal",description:"Digital payments revolution. Network moats vs disruption casualties.",created:"2025-02-17",driverMap:BOON_DRIVER_MAP,stocks:BOON_STOCKS},
+  {id:"oz",name:"Oz",teamId:"healthcare",type:"internal",description:"GLP-1 & innovation pipeline. Obesity revolution meets pricing reality.",created:"2025-02-17",driverMap:OZ_DRIVER_MAP,stocks:OZ_STOCKS},
 ];
 
 /* ═══════════════ MICRO COMPONENTS ═══════════════ */
@@ -174,7 +291,7 @@ function Sidebar({teams,models,selected,onSelect,onNewModel,onNewTeam}){
       <div style={{padding:'4px 16px 4px',fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:'.12em',textTransform:'uppercase'}}>Pipeline</div>
       <NI active={selected.type==='macro'} color="var(--y)" icon="⚡" label="Macro Env" stage="1" onClick={()=>onSelect({type:'macro'})}/>
       <div style={{height:1,background:'var(--border)',margin:'6px 16px'}}/>
-      <div style={{padding:'4px 16px 4px',fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:'.12em',textTransform:'uppercase'}}>Models (2–6)</div>
+      <div style={{padding:'4px 16px 4px',fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:'.12em',textTransform:'uppercase'}}>GRS Operators</div>
       {teams.map(team=><div key={team.id}>
         <NI active={selected.type==='team'&&selected.id===team.id} color={team.color} icon={team.icon} label={team.name} count={(grouped[team.id]||[]).length} onClick={()=>onSelect({type:'team',id:team.id})}/>
         {(grouped[team.id]||[]).map(m=><div key={m.id} onClick={()=>onSelect({type:'model',id:m.id})} style={{padding:'7px 16px 7px 44px',cursor:'pointer',fontSize:11,fontFamily:'var(--mono)',color:selected.type==='model'&&selected.id===m.id?'var(--fg)':'var(--fg4)',background:selected.type==='model'&&selected.id===m.id?'var(--bg2)':'transparent',borderLeft:selected.type==='model'&&selected.id===m.id?`3px solid ${team.color}`:'3px solid transparent',transition:'all .1s'}}>● {m.name}<span style={{marginLeft:6,fontSize:9,color:'var(--fg4)'}}>{(m.stocks||[]).length}</span></div>)}
@@ -197,7 +314,7 @@ function OverviewView({teams,models,globalDrivers,onSelect}){
   return<div style={{padding:28,animation:'fadeIn .3s ease'}}>
     <div style={{marginBottom:28}}>
       <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--fg)',fontWeight:400,marginBottom:4}}>Command Centre</h1>
-      <p style={{fontSize:13,color:'var(--fg3)'}}>7-stage pipeline: Macro → Universe → Mapping → Scoring → Engine → Conviction → Export</p>
+      <p style={{fontSize:13,color:'var(--fg3)'}}>GRS Price Target Engine — 6 operators, 80 names, 36 macro drivers</p>
     </div>
     <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:28}}>
       {[['Models',models.length,'var(--fg)'],['Total Names',totalS,'var(--b)'],['Longs',totalL,'var(--g)'],['Shorts',totalS-totalL,'var(--r)'],['Bull Drivers',bullDrivers+'/'+globalDrivers.length,'var(--y)']].map(([l,v,c])=>

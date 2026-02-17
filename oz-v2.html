@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oz — Healthcare & Biotech | GRS Price Target Engine</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#010409;font-family:-apple-system,sans-serif}</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useMemo } = React;
+
+
+const SD = [
+  { id: "db", label: "Deep Bear", color: "#ef4444", bp: 5 },
+  { id: "b", label: "Bear", color: "#f97316", bp: 10 },
+  { id: "mb", label: "Mild Bear", color: "#eab308", bp: 15 },
+  { id: "base", label: "Base", color: "#6366f1", bp: 35 },
+  { id: "mbu", label: "Mild Bull", color: "#22d3ee", bp: 20 },
+  { id: "bu", label: "Bull", color: "#10b981", bp: 10 },
+  { id: "dbu", label: "Deep Bull", color: "#06d6a0", bp: 5 },
+];
+
+const INIT_DRIVERS = [
+  { id: "glp1", name: "GLP-1/Obesity Momentum", weight: 25, signal: 0.6 },
+  { id: "pipeline", name: "Pipeline/FDA Catalysts", weight: 20, signal: 0.4 },
+  { id: "pricing", name: "Drug Pricing Pressure", weight: 20, signal: -0.4 },
+  { id: "rates", name: "Rate Environment", weight: 10, signal: -0.2 },
+  { id: "ma", name: "M&A / Dealmaking", weight: 15, signal: 0.3 },
+  { id: "aging", name: "Demographics/Aging", weight: 10, signal: 0.5 },
+];
+
+// sens order: [glp1, pipeline, pricing, rates, ma, aging]
+const STOCKS = [
+  // LONGS - GLP-1 winners, surgical robotics, innovation leaders
+  { t: "LLY", n: "Eli Lilly", sec: "GLP-1 Leader", v: "LONG", c: 920, sc: [580,680,800,985,1150,1350,1600], sens: [.9,.7,-.4,-.2,.3,.6], pos: {si:0.8,fl:.6,os:.3,ins:.4} },
+  { t: "ISRG", n: "Intuitive Surgical", sec: "Robotics", v: "LONG", c: 580, sc: [340,410,500,625,740,880,1050], sens: [.2,.5,-.2,-.3,.4,.8], pos: {si:1.2,fl:.4,os:.1,ins:.2} },
+  { t: "VRTX", n: "Vertex Pharma", sec: "Rare Disease", v: "LONG", c: 455, sc: [280,340,400,490,570,670,800], sens: [.1,.8,-.3,-.2,.5,.4], pos: {si:1.5,fl:.4,os:.1,ins:.3} },
+  { t: "REGN", n: "Regeneron", sec: "Biologics", v: "LONG", c: 710, sc: [440,530,630,760,880,1030,1220], sens: [.2,.7,-.3,-.1,.4,.5], pos: {si:1.1,fl:.5,os:.2,ins:.4} },
+  { t: "TMO", n: "Thermo Fisher", sec: "Life Sciences", v: "LONG", c: 540, sc: [340,410,480,575,665,780,920], sens: [.3,.4,-.1,-.3,.6,.6], pos: {si:1.0,fl:.3,os:.1,ins:.2} },
+  { t: "DXCM", n: "DexCom", sec: "MedTech/CGM", v: "LONG", c: 82, sc: [38,52,68,90,115,145,185], sens: [.7,.5,-.3,-.4,.3,.7], pos: {si:5.5,fl:.2,os:-.1,ins:.1} },
+  { t: "ARGX", n: "argenx", sec: "Biotech", v: "LONG", c: 680, sc: [350,450,570,730,880,1060,1300], sens: [.1,.9,-.2,-.3,.6,.3], pos: {si:3.2,fl:.3,os:.1,ins:.2} },
+  { t: "ALNY", n: "Alnylam Pharma", sec: "RNAi", v: "LONG", c: 265, sc: [130,175,225,290,355,430,530], sens: [.1,.8,-.3,-.3,.5,.4], pos: {si:4.8,fl:.2,os:0,ins:.1} },
+  // SHORTS - Pricing headwinds, pipeline risk, structural challenges
+  { t: "NVO", n: "Novo Nordisk", sec: "GLP-1/Pricing", v: "SHORT", c: 50, sc: [25,32,40,52,65,82,105], sens: [-.4,-.3,.5,.2,-.2,-.1], pos: {si:3.5,fl:-.3,os:-.2,ins:-.2} },
+  { t: "UNH", n: "UnitedHealth", sec: "Managed Care", v: "SHORT", c: 470, sc: [280,340,410,485,560,640,740], sens: [-.3,-.1,.6,.3,-.2,.3], pos: {si:2.8,fl:-.3,os:-.2,ins:-.4} },
+  { t: "PFE", n: "Pfizer", sec: "Big Pharma", v: "SHORT", c: 26, sc: [14,18,22,27,32,38,46], sens: [-.2,-.4,.4,.3,-.3,-.2], pos: {si:3.2,fl:-.2,os:-.1,ins:-.1} },
+  { t: "MRNA", n: "Moderna", sec: "mRNA Platform", v: "SHORT", c: 32, sc: [12,18,25,34,48,68,95], sens: [-.1,-.5,.3,.4,-.2,-.3], pos: {si:9.5,fl:-.4,os:-.4,ins:-.3} },
+  { t: "CVS", n: "CVS Health", sec: "Pharmacy/PBM", v: "SHORT", c: 56, sc: [32,40,48,58,68,80,95], sens: [-.2,-.1,.6,.2,-.3,.2], pos: {si:2.5,fl:-.2,os:-.1,ins:0} },
+];
+
+function calc(stock, drivers) {
+  const tw = drivers.reduce((s, d) => s + d.weight, 0) || 1;
+  const bp = SD.map(s => s.bp);
+  const sp = bp.map((b, si) => {
+    const dir = si - 3;
+    let ms = 0;
+    drivers.forEach((d, di) => {
+      ms += (d.weight / tw) * d.signal * (stock.sens[di] || 0) * dir * 0.15;
+    });
+    const pa = 0.15;
+    const pi = dir > 0
+      ? (stock.pos.si / 20 + stock.pos.fl) * pa
+      : (-stock.pos.si / 20 + stock.pos.os) * pa;
+    return Math.max(1, b * (1 + ms + pi * dir * 0.1));
+  });
+  const tot = sp.reduce((s, p) => s + p, 0);
+  const pr = sp.map(p => (p / tot) * 100);
+  const ev = pr.reduce((s, p, i) => s + (p / 100) * stock.sc[i], 0);
+  const rr = ((ev - stock.c) / stock.c) * 100;
+  const buw = pr.slice(4).reduce((s, p, i) => s + p * Math.abs(stock.sc[i + 4] - ev), 0);
+  const bew = pr.slice(0, 3).reduce((s, p, i) => s + p * Math.abs(stock.sc[i] - ev), 0);
+  const skew = bew > 0 ? buw / bew : 2;
+  let vd = "NEUTRAL";
+  if (rr > 15 && skew > 1.2) vd = "STRONG LONG";
+  else if (rr > 8 && skew > 0.8) vd = "LONG";
+  else if (rr < -15 && skew < 0.6) vd = "STRONG SHORT";
+  else if (rr < -8 && skew < 0.8) vd = "SHORT";
+  let tier = "Watchlist";
+  if (Math.abs(rr) > 15) tier = "Core";
+  else if (Math.abs(rr) > 8) tier = "Satellite";
+  const mdd = ((stock.sc[0] - stock.c) / stock.c) * 100;
+  const mxu = ((stock.sc[6] - stock.c) / stock.c) * 100;
+  return { pr, ev, rr, skew, vd, tier, mdd, mxu };
+}
+
+const VC = { "STRONG LONG": "#10b981", "LONG": "#22d3ee", "NEUTRAL": "#8b949e", "SHORT": "#f97316", "STRONG SHORT": "#ef4444" };
+const TC = { Core: "#6366f1", Satellite: "#22d3ee", Watchlist: "#4b5563" };
+function fmt(v) { if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + "k"; if (Math.abs(v) >= 100) return v.toFixed(0); return v.toFixed(2); }
+
+function Card({ stock, drivers, open, toggle }) {
+  const r = useMemo(() => calc(stock, drivers), [stock, drivers]);
+  const mx = Math.max(...r.pr);
+  return (
+    <div style={{ background: "#0d1117", borderRadius: 10, border: "1px solid #1e293b", borderLeft: `3px solid ${VC[r.vd] || "#4b5563"}`, overflow: "hidden" }}>
+      <div onClick={toggle} style={{ padding: "12px 14px", cursor: "pointer", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 110 }}>
+          <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: "#e6edf3" }}>{stock.t}</div>
+          <div style={{ fontSize: 11, color: "#8b949e", marginTop: 1 }}>{stock.n}</div>
+          <div style={{ fontSize: 9, color: "#4b5563", marginTop: 1 }}>{stock.sec}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 50, marginBottom: 3 }}>
+            {r.pr.map((p, i) => (<div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}><span style={{ fontSize: 7, fontFamily: "monospace", color: "#8b949e", marginBottom: 1 }}>{p.toFixed(0)}%</span><div style={{ width: "100%", height: `${(p / mx) * 38}px`, background: `linear-gradient(180deg, ${SD[i].color}bb, ${SD[i].color}33)`, borderRadius: "2px 2px 0 0", border: `1px solid ${SD[i].color}55` }} /></div>))}
+          </div>
+          <div style={{ display: "flex", gap: 2 }}>{stock.sc.map((s, i) => (<div key={i} style={{ flex: 1, textAlign: "center", fontSize: 7, fontFamily: "monospace", color: SD[i].color }}>{fmt(s)}</div>))}</div>
+        </div>
+        <div style={{ minWidth: 115, textAlign: "right" }}>
+          <div style={{ fontSize: 10, fontFamily: "monospace", color: "#8b949e" }}>Now: {fmt(stock.c)}</div>
+          <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: "#6366f1" }}>EV: {fmt(r.ev)}</div>
+          <div style={{ fontSize: 12, fontFamily: "monospace", color: r.rr > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>{r.rr > 0 ? "+" : ""}{r.rr.toFixed(1)}%</div>
+        </div>
+        <div style={{ minWidth: 90, textAlign: "right" }}>
+          <div style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: VC[r.vd] }}>{r.vd}</div>
+          <div style={{ fontFamily: "monospace", fontSize: 10, color: TC[r.tier], marginTop: 2 }}>{r.tier}</div>
+          <div style={{ fontFamily: "monospace", fontSize: 10, color: r.skew > 1 ? "#22d3ee" : "#f97316", marginTop: 2 }}>Skew {r.skew.toFixed(2)}</div>
+        </div>
+      </div>
+      {open && (
+        <div style={{ padding: "0 14px 14px", borderTop: "1px solid #161b22" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginTop: 12 }}>
+            {SD.map((s, i) => (<div key={s.id} style={{ background: "#161b22", borderRadius: 6, padding: 8, textAlign: "center", border: `1px solid ${s.color}22` }}><div style={{ fontSize: 8, fontFamily: "monospace", color: s.color, fontWeight: 600, marginBottom: 3 }}>{s.label}</div><div style={{ fontSize: 13, fontFamily: "monospace", color: "#e6edf3", fontWeight: 700 }}>{fmt(stock.sc[i])}</div><div style={{ fontSize: 10, fontFamily: "monospace", color: s.color, marginTop: 2 }}>{r.pr[i].toFixed(1)}%</div><div style={{ fontSize: 8, fontFamily: "monospace", color: "#4b5563", marginTop: 2 }}>{(((stock.sc[i] - stock.c) / stock.c) * 100).toFixed(0)}%</div></div>))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+            <div style={{ background: "#161b22", borderRadius: 8, padding: 10, border: "1px solid #21262d" }}>
+              <div style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e", letterSpacing: 1, marginBottom: 6 }}>POSITIONING</div>
+              {[["Short Interest",`${stock.pos.si}%`,stock.pos.si>5?"#f97316":"#8b949e"],["Inst. Flow",stock.pos.fl>0?"Net Buy":"Net Sell",stock.pos.fl>0?"#10b981":"#ef4444"],["Options Skew",stock.pos.os>0?"Call Heavy":"Put Heavy",stock.pos.os>0?"#10b981":"#ef4444"],["Insider",stock.pos.ins>0?"Net Buy":stock.pos.ins<0?"Net Sell":"Flat",stock.pos.ins>0?"#10b981":stock.pos.ins<0?"#ef4444":"#8b949e"]].map(([k,va,co])=>(<div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:10,fontFamily:"monospace",padding:"2px 0"}}><span style={{color:"#8b949e"}}>{k}</span><span style={{color:co,fontWeight:600}}>{va}</span></div>))}
+            </div>
+            <div style={{ background: "#161b22", borderRadius: 8, padding: 10, border: "1px solid #21262d" }}>
+              <div style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e", letterSpacing: 1, marginBottom: 6 }}>RISK</div>
+              {[["Max Drawdown",`${r.mdd.toFixed(0)}%`,"#ef4444"],["Max Upside",`+${r.mxu.toFixed(0)}%`,"#10b981"],["Skew Ratio",r.skew.toFixed(2),r.skew>1?"#22d3ee":"#f97316"],["Horizon","60-90d","#8b949e"]].map(([k,va,co])=>(<div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:10,fontFamily:"monospace",padding:"2px 0"}}><span style={{color:"#8b949e"}}>{k}</span><span style={{color:co,fontWeight:600}}>{va}</span></div>))}
+            </div>
+          </div>
+          <div style={{ marginTop: 10, background: "#161b22", borderRadius: 8, padding: 10, border: "1px solid #21262d" }}>
+            <div style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e", letterSpacing: 1, marginBottom: 6 }}>MACRO SENSITIVITY</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {drivers.map((d, i) => { const s = stock.sens[i] || 0; return (<div key={d.id} style={{ background: "#0d1117", borderRadius: 4, padding: "4px 8px", border: "1px solid #21262d", fontSize: 10, fontFamily: "monospace" }}><span style={{ color: "#8b949e" }}>{d.name.split(" ")[0]}: </span><span style={{ color: s > 0 ? "#10b981" : s < 0 ? "#ef4444" : "#8b949e", fontWeight: 600 }}>{s > 0 ? "+" : ""}{s.toFixed(1)}</span></div>); })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OzV2() {
+  const [drivers, setDrivers] = useState(INIT_DRIVERS);
+  const [filter, setFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("rr");
+  const [exp, setExp] = useState(null);
+  const [showMacro, setShowMacro] = useState(true);
+  const upd = (i, f, v) => { setDrivers(p => { const n = [...p]; n[i] = { ...n[i], [f]: v }; return n; }); };
+  const sorted = useMemo(() => {
+    let f = STOCKS;
+    if (filter === "long") f = STOCKS.filter(s => s.v === "LONG");
+    if (filter === "short") f = STOCKS.filter(s => s.v === "SHORT");
+    return [...f].sort((a, b) => { const ca = calc(a, drivers), cb = calc(b, drivers); if (sortBy === "rr") return Math.abs(cb.rr) - Math.abs(ca.rr); if (sortBy === "skew") return cb.skew - ca.skew; if (sortBy === "ev") return (cb.ev / b.c) - (ca.ev / a.c); return 0; });
+  }, [drivers, filter, sortBy]);
+  const tw = drivers.reduce((s, d) => s + d.weight, 0);
+  const longs = STOCKS.filter(s => s.v === "LONG"); const shorts = STOCKS.filter(s => s.v === "SHORT");
+  const avgLongRR = longs.reduce((s, st) => s + calc(st, drivers).rr, 0) / longs.length;
+  const avgShortRR = shorts.reduce((s, st) => s + calc(st, drivers).rr, 0) / shorts.length;
+  return (
+    <div style={{ background: "#010409", minHeight: "100vh", color: "#e6edf3", fontFamily: "-apple-system, sans-serif" }}>
+      <div style={{ borderBottom: "1px solid #1e293b", padding: "16px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#f472b6", boxShadow: "0 0 8px #f472b6", animation: "pulse 2s infinite" }} />
+          <span style={{ fontFamily: "monospace", fontSize: 10, color: "#8b949e", textTransform: "uppercase", letterSpacing: 2 }}>OZ v2 // PRICE TARGET ENGINE</span>
+        </div>
+        <h1 style={{ margin: 0, fontFamily: "Georgia, serif", fontSize: 24, fontWeight: 400 }}>GLP-1 & Innovation Pipeline</h1>
+        <p style={{ color: "#8b949e", fontSize: 12, margin: "4px 0 0" }}>Obesity revolution meets pricing reality | 60-90 day targets | {STOCKS.length} names</p>
+        <div style={{ display: "flex", gap: 16, marginTop: 10, flexWrap: "wrap" }}>
+          <div style={{ background: "#161b22", borderRadius: 6, padding: "6px 12px", border: "1px solid #21262d" }}><span style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e" }}>LONG AVG R/R </span><span style={{ fontSize: 13, fontFamily: "monospace", color: "#10b981", fontWeight: 700 }}>+{avgLongRR.toFixed(1)}%</span></div>
+          <div style={{ background: "#161b22", borderRadius: 6, padding: "6px 12px", border: "1px solid #21262d" }}><span style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e" }}>SHORT AVG R/R </span><span style={{ fontSize: 13, fontFamily: "monospace", color: "#ef4444", fontWeight: 700 }}>{avgShortRR.toFixed(1)}%</span></div>
+          <div style={{ background: "#161b22", borderRadius: 6, padding: "6px 12px", border: "1px solid #21262d" }}><span style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e" }}>REGIME </span><span style={{ fontSize: 13, fontFamily: "monospace", color: avgLongRR > 10 ? "#f472b6" : avgLongRR > 0 ? "#f9a8d4" : "#ef4444", fontWeight: 700 }}>{avgLongRR > 10 ? "INNOVATION BOOM" : avgLongRR > 0 ? "SELECTIVE" : "PRICING CRISIS"}</span></div>
+        </div>
+      </div>
+      <div style={{ padding: "0 20px" }}>
+        <button onClick={() => setShowMacro(!showMacro)} style={{ background: "none", border: "none", color: "#6366f1", fontFamily: "monospace", fontSize: 11, cursor: "pointer", padding: "12px 0", textTransform: "uppercase", letterSpacing: 1 }}>{showMacro ? "\u25BC" : "\u25B6"} Healthcare Drivers</button>
+        {showMacro && (
+          <div style={{ background: "#0d1117", borderRadius: 12, padding: 16, border: "1px solid #1e293b", marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><span style={{ fontFamily: "monospace", fontSize: 10, color: "#8b949e", textTransform: "uppercase", letterSpacing: 1 }}>Healthcare Drivers</span><span style={{ fontFamily: "monospace", fontSize: 10, color: tw === 100 ? "#10b981" : "#ef4444" }}>Weight: {tw}%{tw !== 100 && " (must = 100%)"}</span></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
+              {drivers.map((d, i) => (<div key={d.id} style={{ background: "#161b22", borderRadius: 8, padding: 10, border: "1px solid #21262d" }}><div style={{ fontFamily: "monospace", fontSize: 11, color: "#e6edf3", marginBottom: 6 }}>{d.name}</div><div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}><span style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e", width: 40 }}>Signal</span><input type="range" min="-100" max="100" value={Math.round(d.signal * 100)} onChange={e => upd(i, "signal", parseInt(e.target.value) / 100)} style={{ flex: 1, accentColor: d.signal > 0 ? "#10b981" : d.signal < 0 ? "#ef4444" : "#8b949e" }} /><span style={{ fontSize: 10, fontFamily: "monospace", color: d.signal > 0 ? "#10b981" : d.signal < 0 ? "#ef4444" : "#8b949e", width: 35, textAlign: "right" }}>{d.signal > 0 ? "+" : ""}{d.signal.toFixed(1)}</span></div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 9, fontFamily: "monospace", color: "#8b949e", width: 40 }}>Weight</span><input type="range" min="0" max="50" value={d.weight} onChange={e => upd(i, "weight", parseInt(e.target.value))} style={{ flex: 1, accentColor: "#6366f1" }} /><span style={{ fontSize: 10, fontFamily: "monospace", color: "#6366f1", width: 35, textAlign: "right" }}>{d.weight}%</span></div></div>))}
+            </div>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 3 }}>{[["all","All"],["long","Longs"],["short","Shorts"]].map(([val,lab])=>(<button key={val} onClick={()=>setFilter(val)} style={{background:filter===val?"#6366f122":"transparent",border:`1px solid ${filter===val?"#6366f1":"#21262d"}`,color:filter===val?"#6366f1":"#8b949e",borderRadius:5,padding:"3px 10px",fontFamily:"monospace",fontSize:10,cursor:"pointer"}}>{lab}</button>))}</div>
+          <div style={{width:1,height:16,background:"#21262d"}}/>
+          <div style={{display:"flex",gap:3}}>{[["rr","R/R"],["skew","Skew"],["ev","EV"]].map(([val,lab])=>(<button key={val} onClick={()=>setSortBy(val)} style={{background:sortBy===val?"#22d3ee22":"transparent",border:`1px solid ${sortBy===val?"#22d3ee":"#21262d"}`,color:sortBy===val?"#22d3ee":"#8b949e",borderRadius:5,padding:"3px 10px",fontFamily:"monospace",fontSize:10,cursor:"pointer"}}>{lab}</button>))}</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,paddingBottom:40}}>{sorted.map(stock=>(<Card key={stock.t} stock={stock} drivers={drivers} open={exp===stock.t} toggle={()=>setExp(exp===stock.t?null:stock.t)} />))}</div>
+      </div>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(OzV2));
+</script>
+</body>
+</html>

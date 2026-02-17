@@ -3,20 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>UPSIDE XA — Model Analyst Command Centre</title>
+<title>XA — Command Centre | Upside</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <style>
-:root{--bg0:#04060a;--bg1:#090c14;--bg2:#0e1220;--bg3:#161c2e;--bg4:#1e2640;--fg:#e4e8f4;--fg2:#b4bcd4;--fg3:#7580a0;--fg4:#4a5270;--border:rgba(120,140,200,.08);--border2:rgba(120,140,200,.16);--g:#00e676;--g2:#69f0ae;--r:#ff3d71;--y:#ffc107;--b:#40c4ff;--p:#b388ff;--sidebar-w:240px;--mono:'JetBrains Mono','Fira Code','Consolas',monospace;--sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;--serif:'Instrument Serif',Georgia,serif}
+:root{--bg0:#04060a;--bg1:#090c14;--bg2:#0e1220;--bg3:#161c2e;--bg4:#1e2640;--fg:#e4e8f4;--fg2:#b4bcd4;--fg3:#7580a0;--fg4:#4a5270;--border:rgba(120,140,200,.08);--border2:rgba(120,140,200,.16);--g:#00e676;--g2:#69f0ae;--r:#ff3d71;--y:#ffc107;--b:#40c4ff;--p:#b388ff;--mono:'JetBrains Mono','Fira Code','Consolas',monospace;--sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;--serif:'Instrument Serif',Georgia,serif}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}html,body,#root{height:100%}
 body{background:var(--bg0);color:var(--fg);font-family:var(--sans);-webkit-font-smoothing:antialiased}
 ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:2px}
 input,textarea,select{font-family:inherit}input:focus,textarea:focus,select:focus{outline:none;border-color:var(--g)!important}button{font-family:inherit}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes glow{0%,100%{box-shadow:0 0 8px var(--g)}50%{box-shadow:0 0 20px var(--g)}}
 </style>
 </head>
 <body>
@@ -39,14 +40,13 @@ const SCENARIOS=[
   {id:"dbu",label:"Deep Bull",color:"#06d6a0",bp:5},
 ];
 
-function runEngine(stock,modelDriverMap,globalDrivers){
+function runEngine(stock,driverMap,globalDrivers){
   if(!stock.prices||stock.prices.length!==7)return null;
-  const mapped=modelDriverMap.filter(m=>m.active!==false);
+  const mapped=driverMap.filter(m=>m.active!==false);
   const tw=mapped.reduce((s,m)=>s+m.weight,0)||1;
   const bp=SCENARIOS.map(s=>s.bp);
   const sp=bp.map((b,si)=>{
-    const dir=si-3;
-    let ms=0;
+    const dir=si-3;let ms=0;
     mapped.forEach(m=>{
       const gd=globalDrivers.find(g=>g.id===m.driverId);
       const sig=gd?gd.signal:0;
@@ -71,685 +71,544 @@ function runEngine(stock,modelDriverMap,globalDrivers){
   let tier="Watchlist";
   if(Math.abs(rr)>15)tier="Core";
   else if(Math.abs(rr)>8)tier="Satellite";
-  const mdd=c>0?((stock.prices[0]-c)/c)*100:0;
-  const mxu=c>0?((stock.prices[6]-c)/c)*100:0;
-  return{pr,ev,rr,skew,vd,tier,mdd,mxu};
+  return{pr,ev,rr,skew,vd,tier};
 }
 
-/* ═══════════════ FORMATTING ═══════════════ */
-const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;if(t==='cap')return v>=1000?`$${(v/1000).toFixed(1)}B`:`$${v.toFixed(0)}M`;if(t==='price'){if(Math.abs(v)>=1000)return(v/1000).toFixed(1)+'k';if(Math.abs(v)>=100)return v.toFixed(0);return v.toFixed(2)}return`${v.toFixed(1)}`};
-const VC={"STRONG LONG":"var(--g)","LONG":"var(--b)","NEUTRAL":"var(--fg3)","SHORT":"#f97316","STRONG SHORT":"var(--r)"};
-const TC={Core:"#6366f1",Satellite:"var(--b)",Watchlist:"var(--fg4)"};
+const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;return`${v.toFixed(1)}`};
 
-/* ═══════════════ DEFAULT DATA ═══════════════ */
-const DEFAULT_GLOBAL_DRIVERS=[
-  {id:"kshape",label:"K-Shape Divergence",description:"Structural wealth gap: premium resilience vs budget collapse",signal:0.7,category:"macro"},
-  {id:"oil",label:"Oil Price Trajectory",description:"Crude direction impacts carrier margins and defence budgets",signal:0.2,category:"macro"},
-  {id:"rates",label:"Interest Rates",description:"Rate trajectory impacts leverage, consumer spend, and capex",signal:-0.3,category:"macro"},
-  {id:"consumer",label:"Consumer Confidence",description:"Consumer spending resilience and discretionary demand",signal:0.4,category:"macro"},
-  {id:"btravel",label:"Business Travel Shift",description:"Corporate spend recomposition toward premium",signal:0.5,category:"sector"},
-  {id:"premium",label:"Premiumisation",description:"Quality-over-quantity structural trend",signal:0.6,category:"sector"},
-  {id:"nato",label:"NATO / Defence Spend",description:"NATO 3%+ GDP targets driving multi-year rearmament supercycle",signal:0.8,category:"geo"},
-  {id:"geopol",label:"Geopolitical Escalation",description:"Ukraine, Taiwan, Middle East driving urgency",signal:0.5,category:"geo"},
-  {id:"autonomy",label:"EU Strategic Autonomy",description:"European defence sovereignty reducing US dependency",signal:0.6,category:"geo"},
-  {id:"supply",label:"Supply Chain Capacity",description:"Industrial base constraints creating pricing power",signal:0.3,category:"sector"},
-  /* TANTO — Energy */
-  {id:"t_oilprice",label:"Oil Price Trajectory",description:"Crude direction impacts E&P margins and capital returns",signal:-0.2,category:"macro"},
-  {id:"t_opec",label:"OPEC+ Discipline",description:"Cartel cohesion driving supply management",signal:0.3,category:"macro"},
-  {id:"t_transition",label:"Energy Transition",description:"Renewable capex creating integrated major optionality",signal:0.4,category:"sector"},
-  {id:"t_rates",label:"Interest Rates (Energy)",description:"Rate impact on leveraged E&P and capex decisions",signal:-0.3,category:"macro"},
-  {id:"t_china",label:"China Demand",description:"Chinese economic recovery driving marginal barrel demand",signal:-0.2,category:"macro"},
-  {id:"t_capex",label:"Capex Discipline",description:"Capital allocation restraint supporting FCF and returns",signal:0.5,category:"sector"},
-  /* JACK — AI & Semiconductors */
-  {id:"j_aicapex",label:"AI Capex Momentum",description:"Hyperscaler spending on AI infrastructure",signal:0.7,category:"sector"},
-  {id:"j_china",label:"China/Export Controls",description:"Export restrictions reshaping semiconductor supply chains",signal:-0.3,category:"geo"},
-  {id:"j_rates",label:"Rates & Multiples",description:"Rate trajectory impacting growth stock valuations",signal:-0.2,category:"macro"},
-  {id:"j_consumer",label:"Consumer Demand (Tech)",description:"End-market demand for devices and computing",signal:0.3,category:"macro"},
-  {id:"j_foundry",label:"Foundry/Supply Chain",description:"Fab capacity constraints and node leadership",signal:0.4,category:"sector"},
-  {id:"j_regulation",label:"AI Regulation Risk",description:"Government oversight of AI development and deployment",signal:-0.1,category:"geo"},
-  /* BOON — Fintech & Payments */
-  {id:"b_digital",label:"Digital Payment Shift",description:"Secular cash-to-digital conversion globally",signal:0.6,category:"sector"},
-  {id:"b_rates",label:"Rate Environment (Fin)",description:"Interest rate impact on fintech net interest margins",signal:-0.3,category:"macro"},
-  {id:"b_consumer",label:"Consumer Spend",description:"Consumer spending resilience driving transaction volumes",signal:0.3,category:"macro"},
-  {id:"b_regulation",label:"Regulatory/Cap Risk",description:"Credit card fee caps and fintech regulation",signal:-0.4,category:"geo"},
-  {id:"b_crypto",label:"Crypto/DeFi Momentum",description:"Digital asset adoption driving infrastructure demand",signal:0.2,category:"sector"},
-  {id:"b_em",label:"EM Fintech Growth",description:"Emerging market financial inclusion opportunity",signal:0.5,category:"sector"},
-  /* OZ — Healthcare & Biotech */
-  {id:"o_glp1",label:"GLP-1/Obesity Momentum",description:"Obesity drug revolution reshaping healthcare",signal:0.6,category:"sector"},
-  {id:"o_pipeline",label:"Pipeline/FDA Catalysts",description:"Drug approval pipeline and regulatory momentum",signal:0.4,category:"sector"},
-  {id:"o_pricing",label:"Drug Pricing Pressure",description:"Government and PBM pricing pressure on pharma",signal:-0.4,category:"geo"},
-  {id:"o_rates",label:"Rate Environment (HC)",description:"Rate impact on biotech valuations and M&A",signal:-0.2,category:"macro"},
-  {id:"o_ma",label:"M&A / Dealmaking",description:"Pharma acquisition cycle and strategic dealmaking",signal:0.3,category:"sector"},
-  {id:"o_aging",label:"Demographics/Aging",description:"Aging population driving structural healthcare demand",signal:0.5,category:"macro"},
+/* ═══════════════ OPERATOR REGISTRY ═══════════════ */
+const OPERATORS = [
+  {
+    id:"tig", name:"Tig", fullName:"Kris 'Tig' Paronto", teamId:"travel",
+    team:"Travel", color:"#00e676", icon:"✈", file:"tig-v2.html",
+    desc:"K-Shape Travel Divergence",
+    driverMap:[
+      {driverId:"kshape",weight:25},{driverId:"rates_tig",weight:20},{driverId:"oil_tig",weight:20},
+      {driverId:"consumer_tig",weight:15},{driverId:"btravel",weight:10},{driverId:"premium",weight:10},
+    ],
+    drivers:[
+      {id:"kshape",label:"K-Shape Divergence",signal:0.7},
+      {id:"rates_tig",label:"Interest Rates",signal:-0.3},
+      {id:"oil_tig",label:"Oil Price Trajectory",signal:0.2},
+      {id:"consumer_tig",label:"Consumer Confidence",signal:0.4},
+      {id:"btravel",label:"Business Travel Shift",signal:0.5},
+      {id:"premium",label:"Premiumisation",signal:0.6},
+    ],
+    stocks:[
+      {ticker:"NAS.OL",name:"Norwegian Air",verdict:"long",currentPrice:12.8,prices:[6.5,8.2,10.5,14.8,17.5,21,26],sens:{kshape:.8,rates_tig:-.6,oil_tig:-.5,consumer_tig:.7,btravel:.3,premium:.9}},
+      {ticker:"IAG.L",name:"IAG (BA/Iberia)",verdict:"long",currentPrice:2.15,prices:[1.1,1.45,1.8,2.5,2.95,3.5,4.2],sens:{kshape:.7,rates_tig:-.4,oil_tig:-.6,consumer_tig:.6,btravel:.7,premium:.8}},
+      {ticker:"EZJ.L",name:"easyJet",verdict:"long",currentPrice:5.4,prices:[2.8,3.6,4.5,6.2,7.4,8.8,11],sens:{kshape:.6,rates_tig:-.5,oil_tig:-.7,consumer_tig:.5,btravel:.2,premium:.7}},
+      {ticker:"THYAO.IS",name:"Turkish Airlines",verdict:"long",currentPrice:282,prices:[140,185,230,320,380,450,560],sens:{kshape:.5,rates_tig:-.3,oil_tig:-.4,consumer_tig:.4,btravel:.8,premium:.7}},
+      {ticker:"QAN.AX",name:"Qantas",verdict:"long",currentPrice:8.9,prices:[4.5,5.8,7.2,10.2,12,14.5,18],sens:{kshape:.6,rates_tig:-.3,oil_tig:-.5,consumer_tig:.5,btravel:.6,premium:.8}},
+      {ticker:"MAR",name:"Marriott",verdict:"long",currentPrice:265,prices:[160,195,230,290,330,380,440],sens:{kshape:.7,rates_tig:-.2,oil_tig:-.1,consumer_tig:.8,btravel:.6,premium:.9}},
+      {ticker:"IHG.L",name:"IHG",verdict:"long",currentPrice:88.5,prices:[52,64,76,98,112,130,155],sens:{kshape:.7,rates_tig:-.2,oil_tig:-.1,consumer_tig:.7,btravel:.5,premium:.8}},
+      {ticker:"BKNG",name:"Booking Holdings",verdict:"long",currentPrice:4450,prices:[2800,3400,3900,4800,5400,6200,7500],sens:{kshape:.5,rates_tig:-.2,oil_tig:-.1,consumer_tig:.6,btravel:.4,premium:.7}},
+      {ticker:"ZURN.SW",name:"Zurich Airport",verdict:"long",currentPrice:205,prices:[130,155,180,225,260,300,360],sens:{kshape:.4,rates_tig:-.2,oil_tig:-.1,consumer_tig:.5,btravel:.3,premium:.6}},
+      {ticker:"WIZZ.L",name:"Wizz Air",verdict:"short",currentPrice:18.5,prices:[6,9.5,13,17,22,28,35],sens:{kshape:-.8,rates_tig:.5,oil_tig:.7,consumer_tig:-.6,btravel:-.2,premium:-.9}},
+      {ticker:"RYA.L",name:"Ryanair",verdict:"short",currentPrice:18.8,prices:[8.5,12,15.5,19.5,23,27,32],sens:{kshape:-.6,rates_tig:.4,oil_tig:.6,consumer_tig:-.4,btravel:-.1,premium:-.7}},
+      {ticker:"AF.PA",name:"Air France-KLM",verdict:"short",currentPrice:8.2,prices:[2.5,4,5.8,7.8,10.5,13,16],sens:{kshape:-.7,rates_tig:.6,oil_tig:.5,consumer_tig:-.5,btravel:-.3,premium:-.6}},
+      {ticker:"LHA.DE",name:"Lufthansa",verdict:"short",currentPrice:6.5,prices:[2,3.2,4.6,6.2,8,10,13],sens:{kshape:-.6,rates_tig:.5,oil_tig:.4,consumer_tig:-.4,btravel:-.4,premium:-.5}},
+      {ticker:"WH",name:"Wyndham",verdict:"short",currentPrice:82,prices:[45,55,68,80,95,110,130],sens:{kshape:-.6,rates_tig:.3,oil_tig:.2,consumer_tig:-.7,btravel:-.3,premium:-.8}},
+      {ticker:"FRA.DE",name:"Fraport",verdict:"short",currentPrice:52,prices:[28,36,44,54,62,72,85],sens:{kshape:-.4,rates_tig:.4,oil_tig:.2,consumer_tig:-.3,btravel:-.2,premium:-.5}},
+    ]
+  },
+  {
+    id:"rone", name:"Rone", fullName:"Mark 'Oz' Geist", teamId:"defence",
+    team:"Defence", color:"#40c4ff", icon:"🛡", file:"rone-v2.html",
+    desc:"NATO Rearmament Supercycle",
+    driverMap:[
+      {driverId:"nato",weight:30},{driverId:"geopol",weight:25},{driverId:"autonomy",weight:15},
+      {driverId:"rates_rone",weight:10},{driverId:"supply",weight:10},{driverId:"oil_rone",weight:10},
+    ],
+    drivers:[
+      {id:"nato",label:"NATO / Defence Spend",signal:0.8},
+      {id:"geopol",label:"Geopolitical Escalation",signal:0.5},
+      {id:"autonomy",label:"EU Strategic Autonomy",signal:0.6},
+      {id:"rates_rone",label:"Interest Rates",signal:-0.3},
+      {id:"supply",label:"Supply Chain Capacity",signal:0.3},
+      {id:"oil_rone",label:"Oil Price",signal:0.2},
+    ],
+    stocks:[
+      {ticker:"BA.L",name:"BAE Systems",verdict:"long",currentPrice:2031,prices:[1400,1650,1850,2200,2450,2750,3200],sens:{nato:.8,geopol:.7,autonomy:.5,rates_rone:-.3,supply:-.2,oil_rone:-.1}},
+      {ticker:"RHM.DE",name:"Rheinmetall",verdict:"long",currentPrice:1609,prices:[900,1100,1350,1750,2050,2400,3000],sens:{nato:.9,geopol:.9,autonomy:.7,rates_rone:-.4,supply:-.6,oil_rone:-.1}},
+      {ticker:"SAAB-B.ST",name:"Saab",verdict:"long",currentPrice:657,prices:[380,470,560,720,840,980,1200],sens:{nato:.8,geopol:.8,autonomy:.6,rates_rone:-.2,supply:-.3,oil_rone:-.1}},
+      {ticker:"HO.PA",name:"Thales",verdict:"long",currentPrice:245,prices:[165,195,220,270,310,360,430],sens:{nato:.7,geopol:.6,autonomy:.7,rates_rone:-.2,supply:-.2,oil_rone:-.1}},
+      {ticker:"LDO.MI",name:"Leonardo",verdict:"long",currentPrice:54,prices:[30,38,46,60,70,82,100],sens:{nato:.7,geopol:.6,autonomy:.6,rates_rone:-.5,supply:-.3,oil_rone:-.1}},
+      {ticker:"AIR.PA",name:"Airbus D&S",verdict:"long",currentPrice:192,prices:[130,155,175,210,240,275,330],sens:{nato:.7,geopol:.5,autonomy:.8,rates_rone:-.3,supply:-.4,oil_rone:-.1}},
+      {ticker:"RR.L",name:"Rolls-Royce",verdict:"long",currentPrice:1271,prices:[800,950,1100,1400,1600,1850,2200],sens:{nato:.5,geopol:.4,autonomy:.4,rates_rone:-.3,supply:-.3,oil_rone:-.1}},
+      {ticker:"QQ.L",name:"QinetiQ",verdict:"long",currentPrice:474,prices:[320,380,430,520,580,660,780],sens:{nato:.6,geopol:.4,autonomy:.3,rates_rone:-.2,supply:-.1,oil_rone:0}},
+      {ticker:"LMT",name:"Lockheed Martin",verdict:"short",currentPrice:653,prices:[420,500,570,640,720,810,950],sens:{nato:.3,geopol:.4,autonomy:-.7,rates_rone:-.2,supply:-.1,oil_rone:0}},
+      {ticker:"GD",name:"General Dynamics",verdict:"short",currentPrice:360,prices:[240,280,320,365,410,460,530],sens:{nato:.2,geopol:.3,autonomy:-.6,rates_rone:-.3,supply:-.1,oil_rone:0}},
+      {ticker:"HAG.DE",name:"Hensoldt",verdict:"short",currentPrice:81,prices:[40,52,65,78,95,115,145],sens:{nato:.5,geopol:.4,autonomy:.3,rates_rone:-.5,supply:-.6,oil_rone:0}},
+      {ticker:"AVON.L",name:"Avon Protection",verdict:"short",currentPrice:1050,prices:[600,750,900,1050,1200,1400,1700],sens:{nato:.3,geopol:.3,autonomy:.1,rates_rone:-.3,supply:-.4,oil_rone:0}},
+      {ticker:"CHG.L",name:"Chemring",verdict:"short",currentPrice:500,prices:[320,380,440,510,580,660,780],sens:{nato:.4,geopol:.3,autonomy:.2,rates_rone:-.3,supply:-.5,oil_rone:0}},
+    ]
+  },
+  {
+    id:"tanto", name:"Tanto", fullName:"Kris 'Tanto' Paronto", teamId:"energy",
+    team:"Energy & Commodities", color:"#f59e0b", icon:"🛢", file:"tanto-v2.html",
+    desc:"Energy Transition Divergence",
+    driverMap:[
+      {driverId:"t_oilprice",weight:30},{driverId:"t_opec",weight:20},{driverId:"t_transition",weight:15},
+      {driverId:"t_rates",weight:10},{driverId:"t_china",weight:15},{driverId:"t_capex",weight:10},
+    ],
+    drivers:[
+      {id:"t_oilprice",label:"Oil Price Trajectory",signal:-0.2},
+      {id:"t_opec",label:"OPEC+ Discipline",signal:0.3},
+      {id:"t_transition",label:"Energy Transition",signal:0.4},
+      {id:"t_rates",label:"Interest Rates",signal:-0.3},
+      {id:"t_china",label:"China Demand",signal:-0.2},
+      {id:"t_capex",label:"Capex Discipline",signal:0.5},
+    ],
+    stocks:[
+      {ticker:"SHEL",name:"Shell",verdict:"long",currentPrice:78,prices:[48,58,68,85,98,115,140],sens:{t_oilprice:.7,t_opec:.6,t_transition:-.3,t_rates:-.2,t_china:.5,t_capex:.7}},
+      {ticker:"XOM",name:"ExxonMobil",verdict:"long",currentPrice:149,prices:[95,115,132,160,182,210,250],sens:{t_oilprice:.8,t_opec:.5,t_transition:-.4,t_rates:-.1,t_china:.4,t_capex:.8}},
+      {ticker:"CVX",name:"Chevron",verdict:"long",currentPrice:184,prices:[115,140,162,195,225,260,310],sens:{t_oilprice:.7,t_opec:.5,t_transition:-.3,t_rates:-.2,t_china:.4,t_capex:.9}},
+      {ticker:"TTE",name:"TotalEnergies",verdict:"long",currentPrice:77,prices:[45,55,66,82,96,115,140],sens:{t_oilprice:.6,t_opec:.5,t_transition:.2,t_rates:-.2,t_china:.5,t_capex:.6}},
+      {ticker:"EQNR",name:"Equinor",verdict:"long",currentPrice:28,prices:[16,20,24,30,36,43,52],sens:{t_oilprice:.8,t_opec:.6,t_transition:.3,t_rates:-.1,t_china:.3,t_capex:.5}},
+      {ticker:"CNQ",name:"Canadian Natural",verdict:"long",currentPrice:28,prices:[15,19,23,30,36,44,55],sens:{t_oilprice:.9,t_opec:.4,t_transition:-.5,t_rates:-.3,t_china:.3,t_capex:.8}},
+      {ticker:"SU",name:"Suncor Energy",verdict:"long",currentPrice:55,prices:[32,39,47,59,70,84,105],sens:{t_oilprice:.8,t_opec:.4,t_transition:-.4,t_rates:-.2,t_china:.3,t_capex:.7}},
+      {ticker:"VET",name:"Vermilion Energy",verdict:"long",currentPrice:9.5,prices:[4,5.5,7.5,11,14,18,24],sens:{t_oilprice:.9,t_opec:.5,t_transition:-.6,t_rates:-.4,t_china:.4,t_capex:.6}},
+      {ticker:"BP",name:"BP",verdict:"short",currentPrice:39,prices:[18,24,31,38,48,58,72],sens:{t_oilprice:-.5,t_opec:-.4,t_transition:.3,t_rates:.3,t_china:-.3,t_capex:-.7}},
+      {ticker:"OXY",name:"Occidental",verdict:"short",currentPrice:46,prices:[22,30,38,48,56,66,80],sens:{t_oilprice:-.6,t_opec:-.3,t_transition:-.2,t_rates:.2,t_china:-.2,t_capex:-.8}},
+      {ticker:"RIG",name:"Transocean",verdict:"short",currentPrice:3.8,prices:[1,1.8,2.8,4,5.5,7.5,10],sens:{t_oilprice:-.8,t_opec:-.5,t_transition:-.6,t_rates:.5,t_china:-.4,t_capex:-.5}},
+      {ticker:"HAL",name:"Halliburton",verdict:"short",currentPrice:24,prices:[12,16,20,25,30,36,44],sens:{t_oilprice:-.6,t_opec:-.4,t_transition:-.3,t_rates:.2,t_china:-.3,t_capex:-.4}},
+      {ticker:"PBR",name:"Petrobras",verdict:"short",currentPrice:15,prices:[7,9.5,12.5,15.5,19,23,28],sens:{t_oilprice:-.5,t_opec:-.3,t_transition:-.1,t_rates:.4,t_china:-.5,t_capex:-.3}},
+    ]
+  },
+  {
+    id:"jack", name:"Jack", fullName:"Jack Silva", teamId:"semiconductors",
+    team:"AI & Semiconductors", color:"#818cf8", icon:"🧠", file:"jack-v2.html",
+    desc:"AI Capex Supercycle",
+    driverMap:[
+      {driverId:"j_aicapex",weight:30},{driverId:"j_china",weight:20},{driverId:"j_rates",weight:15},
+      {driverId:"j_consumer",weight:10},{driverId:"j_foundry",weight:15},{driverId:"j_regulation",weight:10},
+    ],
+    drivers:[
+      {id:"j_aicapex",label:"AI Capex Momentum",signal:0.7},
+      {id:"j_china",label:"China/Export Controls",signal:-0.3},
+      {id:"j_rates",label:"Rates & Multiples",signal:-0.2},
+      {id:"j_consumer",label:"Consumer Demand",signal:0.3},
+      {id:"j_foundry",label:"Foundry/Supply Chain",signal:0.4},
+      {id:"j_regulation",label:"AI Regulation Risk",signal:-0.1},
+    ],
+    stocks:[
+      {ticker:"NVDA",name:"NVIDIA",verdict:"long",currentPrice:183,prices:[95,125,155,200,240,290,360],sens:{j_aicapex:.9,j_china:-.4,j_rates:-.3,j_consumer:.3,j_foundry:.6,j_regulation:-.4}},
+      {ticker:"TSM",name:"TSMC",verdict:"long",currentPrice:366,prices:[200,260,320,400,475,560,680],sens:{j_aicapex:.7,j_china:-.6,j_rates:-.2,j_consumer:.4,j_foundry:.9,j_regulation:-.2}},
+      {ticker:"AVGO",name:"Broadcom",verdict:"long",currentPrice:325,prices:[180,235,285,355,420,500,620],sens:{j_aicapex:.8,j_china:-.3,j_rates:-.3,j_consumer:.2,j_foundry:.5,j_regulation:-.3}},
+      {ticker:"ASML",name:"ASML",verdict:"long",currentPrice:1407,prices:[800,1000,1200,1500,1750,2050,2500],sens:{j_aicapex:.6,j_china:-.5,j_rates:-.3,j_consumer:.2,j_foundry:.8,j_regulation:-.2}},
+      {ticker:"AMAT",name:"Applied Materials",verdict:"long",currentPrice:180,prices:[105,130,158,195,230,275,340],sens:{j_aicapex:.5,j_china:-.5,j_rates:-.2,j_consumer:.3,j_foundry:.7,j_regulation:-.1}},
+      {ticker:"MRVL",name:"Marvell Tech",verdict:"long",currentPrice:105,prices:[50,68,88,115,140,175,220],sens:{j_aicapex:.8,j_china:-.2,j_rates:-.4,j_consumer:.2,j_foundry:.4,j_regulation:-.3}},
+      {ticker:"ALAB",name:"Astera Labs",verdict:"long",currentPrice:95,prices:[35,52,72,105,140,185,250],sens:{j_aicapex:.9,j_china:-.1,j_rates:-.5,j_consumer:.1,j_foundry:.5,j_regulation:-.2}},
+      {ticker:"MU",name:"Micron",verdict:"long",currentPrice:98,prices:[52,68,82,108,130,160,200],sens:{j_aicapex:.7,j_china:-.3,j_rates:-.3,j_consumer:.5,j_foundry:.6,j_regulation:-.1}},
+      {ticker:"AMD",name:"AMD",verdict:"short",currentPrice:207,prices:[100,135,175,215,260,310,380],sens:{j_aicapex:-.3,j_china:.2,j_rates:.2,j_consumer:-.2,j_foundry:-.3,j_regulation:.2}},
+      {ticker:"INTC",name:"Intel",verdict:"short",currentPrice:24,prices:[10,14,19,25,32,40,52],sens:{j_aicapex:-.4,j_china:.3,j_rates:.3,j_consumer:-.1,j_foundry:-.6,j_regulation:.1}},
+      {ticker:"QCOM",name:"Qualcomm",verdict:"short",currentPrice:168,prices:[90,120,148,175,205,240,285],sens:{j_aicapex:-.2,j_china:.4,j_rates:.2,j_consumer:-.4,j_foundry:-.2,j_regulation:.3}},
+      {ticker:"ARM",name:"ARM Holdings",verdict:"short",currentPrice:172,prices:[80,110,145,180,220,270,340],sens:{j_aicapex:-.2,j_china:.1,j_rates:.3,j_consumer:-.3,j_foundry:-.2,j_regulation:.4}},
+      {ticker:"SMCI",name:"Super Micro",verdict:"short",currentPrice:40,prices:[12,20,30,42,58,78,105],sens:{j_aicapex:-.5,j_china:.2,j_rates:.3,j_consumer:-.1,j_foundry:-.4,j_regulation:.3}},
+    ]
+  },
+  {
+    id:"boon", name:"Boon", fullName:"Dave 'Boon' Benton", teamId:"fintech",
+    team:"Fintech & Payments", color:"#34d399", icon:"💳", file:"boon-v2.html",
+    desc:"Digital Payments Revolution",
+    driverMap:[
+      {driverId:"b_digital",weight:25},{driverId:"b_rates",weight:20},{driverId:"b_consumer",weight:20},
+      {driverId:"b_regulation",weight:15},{driverId:"b_crypto",weight:10},{driverId:"b_em",weight:10},
+    ],
+    drivers:[
+      {id:"b_digital",label:"Digital Payment Shift",signal:0.6},
+      {id:"b_rates",label:"Rate Environment",signal:-0.3},
+      {id:"b_consumer",label:"Consumer Spend",signal:0.3},
+      {id:"b_regulation",label:"Regulatory/Cap Risk",signal:-0.4},
+      {id:"b_crypto",label:"Crypto/DeFi Momentum",signal:0.2},
+      {id:"b_em",label:"EM Fintech Growth",signal:0.5},
+    ],
+    stocks:[
+      {ticker:"V",name:"Visa",verdict:"long",currentPrice:340,prices:[220,260,300,365,420,485,570],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.5}},
+      {ticker:"MA",name:"Mastercard",verdict:"long",currentPrice:518,prices:[340,400,465,555,640,740,870],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.6}},
+      {ticker:"ADYEN.AS",name:"Adyen",verdict:"long",currentPrice:1520,prices:[800,1050,1300,1650,1950,2350,2900],sens:{b_digital:.9,b_rates:-.2,b_consumer:.5,b_regulation:-.3,b_crypto:.2,b_em:.7}},
+      {ticker:"SOFI",name:"SoFi Technologies",verdict:"long",currentPrice:19.7,prices:[8,12,16,22,28,36,48],sens:{b_digital:.6,b_rates:-.6,b_consumer:.4,b_regulation:-.2,b_crypto:.5,b_em:.3}},
+      {ticker:"MELI",name:"MercadoLibre",verdict:"long",currentPrice:2050,prices:[1100,1400,1750,2200,2650,3200,4000],sens:{b_digital:.7,b_rates:-.3,b_consumer:.5,b_regulation:-.2,b_crypto:.4,b_em:.9}},
+      {ticker:"COIN",name:"Coinbase",verdict:"long",currentPrice:265,prices:[100,155,215,290,380,500,680],sens:{b_digital:.3,b_rates:-.4,b_consumer:.2,b_regulation:-.3,b_crypto:.9,b_em:.2}},
+      {ticker:"AFRM",name:"Affirm",verdict:"long",currentPrice:62,prices:[22,35,48,68,90,120,165],sens:{b_digital:.7,b_rates:-.7,b_consumer:.6,b_regulation:-.4,b_crypto:.3,b_em:.4}},
+      {ticker:"NU",name:"Nu Holdings",verdict:"long",currentPrice:12.5,prices:[5.5,7.5,10,13.5,17,22,29],sens:{b_digital:.7,b_rates:-.4,b_consumer:.5,b_regulation:-.2,b_crypto:.3,b_em:.8}},
+      {ticker:"PYPL",name:"PayPal",verdict:"short",currentPrice:40,prices:[18,25,33,42,52,64,80],sens:{b_digital:-.3,b_rates:.2,b_consumer:-.2,b_regulation:.3,b_crypto:-.1,b_em:-.2}},
+      {ticker:"XYZ",name:"Block (Square)",verdict:"short",currentPrice:72,prices:[32,45,58,75,92,115,145],sens:{b_digital:-.2,b_rates:.1,b_consumer:-.3,b_regulation:.2,b_crypto:.4,b_em:-.1}},
+      {ticker:"FIS",name:"Fidelity Nat'l Info",verdict:"short",currentPrice:78,prices:[45,55,66,80,92,108,128],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.1,b_regulation:.4,b_crypto:-.2,b_em:-.3}},
+      {ticker:"GPN",name:"Global Payments",verdict:"short",currentPrice:95,prices:[52,65,80,98,115,135,160],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.2,b_regulation:.4,b_crypto:-.1,b_em:-.3}},
+      {ticker:"WU",name:"Western Union",verdict:"short",currentPrice:11,prices:[5,6.5,8.5,11,14,17,21],sens:{b_digital:-.8,b_rates:.2,b_consumer:-.3,b_regulation:.3,b_crypto:-.2,b_em:-.7}},
+    ]
+  },
+  {
+    id:"oz", name:"Oz", fullName:"Mark 'Oz' Geist", teamId:"healthcare",
+    team:"Healthcare & Biotech", color:"#f472b6", icon:"🧬", file:"oz-v2.html",
+    desc:"GLP-1 & Innovation Pipeline",
+    driverMap:[
+      {driverId:"o_glp1",weight:25},{driverId:"o_pipeline",weight:20},{driverId:"o_pricing",weight:20},
+      {driverId:"o_rates",weight:10},{driverId:"o_ma",weight:15},{driverId:"o_aging",weight:10},
+    ],
+    drivers:[
+      {id:"o_glp1",label:"GLP-1/Obesity Momentum",signal:0.6},
+      {id:"o_pipeline",label:"Pipeline/FDA Catalysts",signal:0.4},
+      {id:"o_pricing",label:"Drug Pricing Pressure",signal:-0.4},
+      {id:"o_rates",label:"Rate Environment",signal:-0.2},
+      {id:"o_ma",label:"M&A / Dealmaking",signal:0.3},
+      {id:"o_aging",label:"Demographics/Aging",signal:0.5},
+    ],
+    stocks:[
+      {ticker:"LLY",name:"Eli Lilly",verdict:"long",currentPrice:920,prices:[580,680,800,985,1150,1350,1600],sens:{o_glp1:.9,o_pipeline:.7,o_pricing:-.4,o_rates:-.2,o_ma:.3,o_aging:.6}},
+      {ticker:"ISRG",name:"Intuitive Surgical",verdict:"long",currentPrice:580,prices:[340,410,500,625,740,880,1050],sens:{o_glp1:.2,o_pipeline:.5,o_pricing:-.2,o_rates:-.3,o_ma:.4,o_aging:.8}},
+      {ticker:"VRTX",name:"Vertex Pharma",verdict:"long",currentPrice:455,prices:[280,340,400,490,570,670,800],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.2,o_ma:.5,o_aging:.4}},
+      {ticker:"REGN",name:"Regeneron",verdict:"long",currentPrice:710,prices:[440,530,630,760,880,1030,1220],sens:{o_glp1:.2,o_pipeline:.7,o_pricing:-.3,o_rates:-.1,o_ma:.4,o_aging:.5}},
+      {ticker:"TMO",name:"Thermo Fisher",verdict:"long",currentPrice:540,prices:[340,410,480,575,665,780,920],sens:{o_glp1:.3,o_pipeline:.4,o_pricing:-.1,o_rates:-.3,o_ma:.6,o_aging:.6}},
+      {ticker:"DXCM",name:"DexCom",verdict:"long",currentPrice:82,prices:[38,52,68,90,115,145,185],sens:{o_glp1:.7,o_pipeline:.5,o_pricing:-.3,o_rates:-.4,o_ma:.3,o_aging:.7}},
+      {ticker:"ARGX",name:"argenx",verdict:"long",currentPrice:680,prices:[350,450,570,730,880,1060,1300],sens:{o_glp1:.1,o_pipeline:.9,o_pricing:-.2,o_rates:-.3,o_ma:.6,o_aging:.3}},
+      {ticker:"ALNY",name:"Alnylam Pharma",verdict:"long",currentPrice:265,prices:[130,175,225,290,355,430,530],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.3,o_ma:.5,o_aging:.4}},
+      {ticker:"NVO",name:"Novo Nordisk",verdict:"short",currentPrice:50,prices:[25,32,40,52,65,82,105],sens:{o_glp1:-.4,o_pipeline:-.3,o_pricing:.5,o_rates:.2,o_ma:-.2,o_aging:-.1}},
+      {ticker:"UNH",name:"UnitedHealth",verdict:"short",currentPrice:470,prices:[280,340,410,485,560,640,740],sens:{o_glp1:-.3,o_pipeline:-.1,o_pricing:.6,o_rates:.3,o_ma:-.2,o_aging:.3}},
+      {ticker:"PFE",name:"Pfizer",verdict:"short",currentPrice:26,prices:[14,18,22,27,32,38,46],sens:{o_glp1:-.2,o_pipeline:-.4,o_pricing:.4,o_rates:.3,o_ma:-.3,o_aging:-.2}},
+      {ticker:"MRNA",name:"Moderna",verdict:"short",currentPrice:32,prices:[12,18,25,34,48,68,95],sens:{o_glp1:-.1,o_pipeline:-.5,o_pricing:.3,o_rates:.4,o_ma:-.2,o_aging:-.3}},
+      {ticker:"CVS",name:"CVS Health",verdict:"short",currentPrice:56,prices:[32,40,48,58,68,80,95],sens:{o_glp1:-.2,o_pipeline:-.1,o_pricing:.6,o_rates:.2,o_ma:-.3,o_aging:.2}},
+    ]
+  },
 ];
 
-const DEFAULT_TEAMS=[
-  {id:"travel",name:"Travel",color:"#00e676",icon:"✈"},
-  {id:"defence",name:"Defence",color:"#40c4ff",icon:"🛡"},
-  {id:"energy",name:"Energy",color:"#f59e0b",icon:"🛢"},
-  {id:"semiconductors",name:"AI & Semiconductors",color:"#818cf8",icon:"🧠"},
-  {id:"fintech",name:"Fintech & Payments",color:"#34d399",icon:"💳"},
-  {id:"healthcare",name:"Healthcare & Biotech",color:"#f472b6",icon:"🧬"},
-  {id:"tech",name:"Tech & Robotics",color:"#b388ff",icon:"🤖"},
-];
-
-const TIG_DRIVER_MAP=[
-  {driverId:"kshape",weight:25},{driverId:"rates",weight:20},{driverId:"oil",weight:20},
-  {driverId:"consumer",weight:15},{driverId:"btravel",weight:10},{driverId:"premium",weight:10},
-];
-const RONE_DRIVER_MAP=[
-  {driverId:"nato",weight:30},{driverId:"geopol",weight:25},{driverId:"autonomy",weight:15},
-  {driverId:"rates",weight:10},{driverId:"supply",weight:10},{driverId:"oil",weight:10},
-];
-
-const TANTO_DRIVER_MAP=[
-  {driverId:"t_oilprice",weight:30},{driverId:"t_opec",weight:20},{driverId:"t_transition",weight:15},
-  {driverId:"t_rates",weight:10},{driverId:"t_china",weight:15},{driverId:"t_capex",weight:10},
-];
-const JACK_DRIVER_MAP=[
-  {driverId:"j_aicapex",weight:30},{driverId:"j_china",weight:20},{driverId:"j_rates",weight:15},
-  {driverId:"j_consumer",weight:10},{driverId:"j_foundry",weight:15},{driverId:"j_regulation",weight:10},
-];
-const BOON_DRIVER_MAP=[
-  {driverId:"b_digital",weight:25},{driverId:"b_rates",weight:20},{driverId:"b_consumer",weight:20},
-  {driverId:"b_regulation",weight:15},{driverId:"b_crypto",weight:10},{driverId:"b_em",weight:10},
-];
-const OZ_DRIVER_MAP=[
-  {driverId:"o_glp1",weight:25},{driverId:"o_pipeline",weight:20},{driverId:"o_pricing",weight:20},
-  {driverId:"o_rates",weight:10},{driverId:"o_ma",weight:15},{driverId:"o_aging",weight:10},
-];
-
-const TIG_STOCKS=[
-  {ticker:"NAS.OL",name:"Norwegian Air",sector:"Short-Haul",verdict:"long",currentPrice:12.8,prices:[6.5,8.2,10.5,14.8,17.5,21,26],sens:{kshape:.8,rates:-.6,oil:-.5,consumer:.7,btravel:.3,premium:.9},thesis:"Mid-market sweet spot. Clean balance sheet. Young fleet.",metrics:{mkt_cap:1850,pe_fwd:12.4,oper_margin:8.1,fcf_yield:6.3,net_debt_ebitda:0.8}},
-  {ticker:"IAG.L",name:"IAG (BA/Iberia)",sector:"Long-Haul",verdict:"long",currentPrice:2.15,prices:[1.1,1.45,1.8,2.5,2.95,3.5,4.2],sens:{kshape:.7,rates:-.4,oil:-.6,consumer:.6,btravel:.7,premium:.8},thesis:"BA captures premium business. Multi-brand covers premium and mid-tier.",metrics:{mkt_cap:12200,pe_fwd:6.8,oper_margin:12.4,fcf_yield:11.2,net_debt_ebitda:1.8}},
-  {ticker:"EZJ.L",name:"easyJet",sector:"Short-Haul",verdict:"long",currentPrice:5.4,prices:[2.8,3.6,4.5,6.2,7.4,8.8,11],sens:{kshape:.6,rates:-.5,oil:-.7,consumer:.5,btravel:.2,premium:.7},thesis:"easyJet Plus gives K-shape resilience. Strong primary airport slots.",metrics:{mkt_cap:4350,pe_fwd:9.1,oper_margin:7.2,fcf_yield:7.8,net_debt_ebitda:1.5}},
-  {ticker:"THYAO.IS",name:"Turkish Airlines",sector:"Long-Haul",verdict:"long",currentPrice:282,prices:[140,185,230,320,380,450,560],sens:{kshape:.5,rates:-.3,oil:-.4,consumer:.4,btravel:.8,premium:.7},thesis:"Istanbul hub sweet spot. Massive fleet renewal. Best biz class investment.",metrics:{mkt_cap:9800,pe_fwd:5.8,oper_margin:15.2,fcf_yield:12.8,net_debt_ebitda:1.2}},
-  {ticker:"QAN.AX",name:"Qantas",sector:"Long-Haul",verdict:"long",currentPrice:8.9,prices:[4.5,5.8,7.2,10.2,12,14.5,18],sens:{kshape:.6,rates:-.3,oil:-.5,consumer:.5,btravel:.6,premium:.8},thesis:"Project Sunrise premium ultra-long-haul. Loyalty is profit engine.",metrics:{mkt_cap:11200,pe_fwd:10.2,oper_margin:11.3,fcf_yield:9.1,net_debt_ebitda:1.4}},
-  {ticker:"MAR",name:"Marriott",sector:"Hotels",verdict:"long",currentPrice:265,prices:[160,195,230,290,330,380,440],sens:{kshape:.7,rates:-.2,oil:-.1,consumer:.8,btravel:.6,premium:.9},thesis:"Asset-light with dominant loyalty. Ritz to Courtyard — K-shape proof.",metrics:{mkt_cap:78500,pe_fwd:22.1,oper_margin:16.8,fcf_yield:4.8,net_debt_ebitda:0.3}},
-  {ticker:"IHG.L",name:"IHG",sector:"Hotels",verdict:"long",currentPrice:88.5,prices:[52,64,76,98,112,130,155],sens:{kshape:.7,rates:-.2,oil:-.1,consumer:.7,btravel:.5,premium:.8},thesis:"Six Senses, Regent luxury. Holiday Inn mid-tier resilient.",metrics:{mkt_cap:14800,pe_fwd:19.4,oper_margin:14.2,fcf_yield:5.2,net_debt_ebitda:0.5}},
-  {ticker:"BKNG",name:"Booking Holdings",sector:"OTA",verdict:"long",currentPrice:4450,prices:[2800,3400,3900,4800,5400,6200,7500],sens:{kshape:.5,rates:-.2,oil:-.1,consumer:.6,btravel:.4,premium:.7},thesis:"Platform captures both ends. Massive FCF and pricing power.",metrics:{mkt_cap:158000,pe_fwd:25.3,oper_margin:32.1,fcf_yield:3.8,net_debt_ebitda:0.2}},
-  {ticker:"ZURN.SW",name:"Zurich Airport",sector:"Airports",verdict:"long",currentPrice:205,prices:[130,155,180,225,260,300,360],sens:{kshape:.4,rates:-.2,oil:-.1,consumer:.5,btravel:.3,premium:.6},thesis:"Best-in-class experience. Premium positioning.",metrics:{mkt_cap:6500,pe_fwd:20.1,oper_margin:28.3,fcf_yield:4.1,net_debt_ebitda:0.8}},
-  {ticker:"WIZZ.L",name:"Wizz Air",sector:"Short-Haul",verdict:"short",currentPrice:18.5,prices:[6,9.5,13,17,22,28,35],sens:{kshape:-.8,rates:.5,oil:.7,consumer:-.6,btravel:-.2,premium:-.9},thesis:"ULCC structurally challenged. CEE low-income most exposed.",metrics:{mkt_cap:1890,pe_fwd:18.2,oper_margin:3.4,fcf_yield:1.2,net_debt_ebitda:3.8}},
-  {ticker:"RYA.L",name:"Ryanair",sector:"Short-Haul",verdict:"short",currentPrice:18.8,prices:[8.5,12,15.5,19.5,23,27,32],sens:{kshape:-.6,rates:.4,oil:.6,consumer:-.4,btravel:-.1,premium:-.7},thesis:"Operational excellence but ULCC faces secular headwinds.",metrics:{mkt_cap:21500,pe_fwd:11.5,oper_margin:14.1,fcf_yield:8.5,net_debt_ebitda:0.4}},
-  {ticker:"AF.PA",name:"Air France-KLM",sector:"Long-Haul",verdict:"short",currentPrice:8.2,prices:[2.5,4,5.8,7.8,10.5,13,16],sens:{kshape:-.7,rates:.6,oil:.5,consumer:-.5,btravel:-.3,premium:-.6},thesis:"Ageing fleet, crushing labour costs, state interference.",metrics:{mkt_cap:2450,pe_fwd:4.2,oper_margin:4.8,fcf_yield:3.1,net_debt_ebitda:4.2}},
-  {ticker:"LHA.DE",name:"Lufthansa",sector:"Long-Haul",verdict:"short",currentPrice:6.5,prices:[2,3.2,4.6,6.2,8,10,13],sens:{kshape:-.6,rates:.5,oil:.4,consumer:-.4,btravel:-.4,premium:-.5},thesis:"ITA adds complexity. Fleet renewal behind. Weak FCF.",metrics:{mkt_cap:7400,pe_fwd:5.1,oper_margin:5.2,fcf_yield:4.2,net_debt_ebitda:2.8}},
-  {ticker:"WH",name:"Wyndham",sector:"Hotels",verdict:"short",currentPrice:82,prices:[45,55,68,80,95,110,130],sens:{kshape:-.6,rates:.3,oil:.2,consumer:-.7,btravel:-.3,premium:-.8},thesis:"Budget-focused. Direct K-shape loser.",metrics:{mkt_cap:5800,pe_fwd:17.8,oper_margin:11.5,fcf_yield:5.8,net_debt_ebitda:2.1}},
-  {ticker:"FRA.DE",name:"Fraport",sector:"Airports",verdict:"short",currentPrice:52,prices:[28,36,44,54,62,72,85],sens:{kshape:-.4,rates:.4,oil:.2,consumer:-.3,btravel:-.2,premium:-.5},thesis:"Massive T3 capex. Ageing infra. Debt burden.",metrics:{mkt_cap:4900,pe_fwd:14.2,oper_margin:18.1,fcf_yield:2.8,net_debt_ebitda:3.4}},
-];
-
-const RONE_STOCKS=[
-  {ticker:"BA.L",name:"BAE Systems",sector:"Multi-Domain",verdict:"long",currentPrice:2031,prices:[1400,1650,1850,2200,2450,2750,3200],sens:{nato:.8,geopol:.7,autonomy:.5,rates:-.3,supply:-.2,oil:-.1},thesis:"UK defence champion. Nuclear sub monopoly. AUKUS generational catalyst.",metrics:{mkt_cap:52800,pe_fwd:20.1,oper_margin:11.2,fcf_yield:5.1,net_debt_ebitda:0.8}},
-  {ticker:"RHM.DE",name:"Rheinmetall",sector:"Land/Ammo",verdict:"long",currentPrice:1609,prices:[900,1100,1350,1750,2050,2400,3000],sens:{nato:.9,geopol:.9,autonomy:.7,rates:-.4,supply:-.6,oil:-.1},thesis:"Zeitenwende's primary beneficiary. NATO ammo replenishment is structural.",metrics:{mkt_cap:69800,pe_fwd:38.5,oper_margin:12.8,fcf_yield:2.1,net_debt_ebitda:0.6}},
-  {ticker:"SAAB-B.ST",name:"Saab",sector:"Aerospace",verdict:"long",currentPrice:657,prices:[380,470,560,720,840,980,1200],sens:{nato:.8,geopol:.8,autonomy:.6,rates:-.2,supply:-.3,oil:-.1},thesis:"Gripen export pipeline. GlobalEye AEW&C. Swedish NATO unlocks procurement.",metrics:{mkt_cap:28500,pe_fwd:32.4,oper_margin:10.1,fcf_yield:2.8,net_debt_ebitda:0.4}},
-  {ticker:"HO.PA",name:"Thales",sector:"Electronics",verdict:"long",currentPrice:245,prices:[165,195,220,270,310,360,430],sens:{nato:.7,geopol:.6,autonomy:.7,rates:-.2,supply:-.2,oil:-.1},thesis:"Defence electronics, radars, C2 systems. Civilian security diversification.",metrics:{mkt_cap:52400,pe_fwd:24.2,oper_margin:12.4,fcf_yield:3.8,net_debt_ebitda:0.5}},
-  {ticker:"LDO.MI",name:"Leonardo",sector:"Aerospace",verdict:"long",currentPrice:54,prices:[30,38,46,60,70,82,100],sens:{nato:.7,geopol:.6,autonomy:.6,rates:-.5,supply:-.3,oil:-.1},thesis:"Italian champion. GCAP 6th-gen fighter. DRS strong in US. Undervalued.",metrics:{mkt_cap:31200,pe_fwd:18.8,oper_margin:7.8,fcf_yield:4.5,net_debt_ebitda:1.2}},
-  {ticker:"AIR.PA",name:"Airbus D&S",sector:"Aerospace",verdict:"long",currentPrice:192,prices:[130,155,175,210,240,275,330],sens:{nato:.7,geopol:.5,autonomy:.8,rates:-.3,supply:-.4,oil:-.1},thesis:"FCAS defines EU air power for 50 years. A400M, Eurofighter. Hidden gem.",metrics:{mkt_cap:128500,pe_fwd:25.8,oper_margin:8.6,fcf_yield:3.2,net_debt_ebitda:0.3}},
-  {ticker:"RR.L",name:"Rolls-Royce",sector:"Engines/Nuclear",verdict:"long",currentPrice:1271,prices:[800,950,1100,1400,1600,1850,2200],sens:{nato:.5,geopol:.4,autonomy:.4,rates:-.3,supply:-.3,oil:-.1},thesis:"Nuclear sub propulsion monopoly (UK). SMRs. Defence turnaround.",metrics:{mkt_cap:53800,pe_fwd:28.4,oper_margin:12.8,fcf_yield:3.5,net_debt_ebitda:0.4}},
-  {ticker:"QQ.L",name:"QinetiQ",sector:"R&D/Test",verdict:"long",currentPrice:474,prices:[320,380,430,520,580,660,780],sens:{nato:.6,geopol:.4,autonomy:.3,rates:-.2,supply:-.1,oil:0},thesis:"UK test & eval niche. Benefits from higher R&D budgets.",metrics:{mkt_cap:2800,pe_fwd:18.5,oper_margin:11.5,fcf_yield:4.2,net_debt_ebitda:0.2}},
-  {ticker:"LMT",name:"Lockheed Martin",sector:"US Prime",verdict:"short",currentPrice:653,prices:[420,500,570,640,720,810,950],sens:{nato:.3,geopol:.4,autonomy:-.7,rates:-.2,supply:-.1,oil:0},thesis:"EU autonomy = EU primes win, US primes lose share. Fully valued.",metrics:{mkt_cap:155000,pe_fwd:18.2,oper_margin:13.2,fcf_yield:4.1,net_debt_ebitda:1.8}},
-  {ticker:"GD",name:"General Dynamics",sector:"US Prime",verdict:"short",currentPrice:360,prices:[240,280,320,365,410,460,530],sens:{nato:.2,geopol:.3,autonomy:-.6,rates:-.3,supply:-.1,oil:0},thesis:"EU autonomy headwind. Gulfstream adds cyclical risk.",metrics:{mkt_cap:49200,pe_fwd:16.5,oper_margin:10.8,fcf_yield:4.8,net_debt_ebitda:1.4}},
-  {ticker:"HAG.DE",name:"Hensoldt",sector:"Electronics",verdict:"short",currentPrice:81,prices:[40,52,65,78,95,115,145],sens:{nato:.5,geopol:.4,autonomy:.3,rates:-.5,supply:-.6,oil:0},thesis:"Valuation stretched. High short interest. Leonardo overhang.",metrics:{mkt_cap:9500,pe_fwd:35.2,oper_margin:8.2,fcf_yield:1.8,net_debt_ebitda:1.8}},
-  {ticker:"AVON.L",name:"Avon Protection",sector:"PPE/Niche",verdict:"short",currentPrice:1050,prices:[600,750,900,1050,1200,1400,1700],sens:{nato:.3,geopol:.3,autonomy:.1,rates:-.3,supply:-.4,oil:0},thesis:"Niche PPE. 6.5% short interest. Limited scaling.",metrics:{mkt_cap:1200,pe_fwd:22.8,oper_margin:9.8,fcf_yield:3.2,net_debt_ebitda:1.5}},
-  {ticker:"CHG.L",name:"Chemring",sector:"Munitions",verdict:"short",currentPrice:500,prices:[320,380,440,510,580,660,780],sens:{nato:.4,geopol:.3,autonomy:.2,rates:-.3,supply:-.5,oil:0},thesis:"Munitions play but smaller scale. Execution risk.",metrics:{mkt_cap:2100,pe_fwd:20.1,oper_margin:12.2,fcf_yield:3.5,net_debt_ebitda:0.8}},
-];
-
-const TANTO_STOCKS=[
-  {ticker:"SHEL",name:"Shell",sector:"Integrated",verdict:"long",currentPrice:78,prices:[48,58,68,85,98,115,140],sens:{t_oilprice:.7,t_opec:.6,t_transition:-.3,t_rates:-.2,t_china:.5,t_capex:.7},thesis:"Transition optionality. LNG leadership. Strong buyback.",metrics:{mkt_cap:220000,pe_fwd:9.2,oper_margin:12.4,fcf_yield:8.5,net_debt_ebitda:0.3}},
-  {ticker:"XOM",name:"ExxonMobil",sector:"Integrated",verdict:"long",currentPrice:149,prices:[95,115,132,160,182,210,250],sens:{t_oilprice:.8,t_opec:.5,t_transition:-.4,t_rates:-.1,t_china:.4,t_capex:.8},thesis:"Permian dominance. Pioneer acquisition. Capital returns machine.",metrics:{mkt_cap:490000,pe_fwd:13.5,oper_margin:14.8,fcf_yield:7.2,net_debt_ebitda:0.5}},
-  {ticker:"CVX",name:"Chevron",sector:"Integrated",verdict:"long",currentPrice:184,prices:[115,140,162,195,225,260,310],sens:{t_oilprice:.7,t_opec:.5,t_transition:-.3,t_rates:-.2,t_china:.4,t_capex:.9},thesis:"Hess acquisition. Permian + Guyana. Capex discipline leader.",metrics:{mkt_cap:330000,pe_fwd:14.2,oper_margin:13.1,fcf_yield:6.8,net_debt_ebitda:0.6}},
-  {ticker:"TTE",name:"TotalEnergies",sector:"Integrated",verdict:"long",currentPrice:77,prices:[45,55,66,82,96,115,140],sens:{t_oilprice:.6,t_opec:.5,t_transition:.2,t_rates:-.2,t_china:.5,t_capex:.6},thesis:"Best-in-class transition strategy. LNG + renewables. European discount.",metrics:{mkt_cap:152000,pe_fwd:8.1,oper_margin:11.2,fcf_yield:9.1,net_debt_ebitda:0.4}},
-  {ticker:"EQNR",name:"Equinor",sector:"Integrated",verdict:"long",currentPrice:28,prices:[16,20,24,30,36,43,52],sens:{t_oilprice:.8,t_opec:.6,t_transition:.3,t_rates:-.1,t_china:.3,t_capex:.5},thesis:"Norwegian state oil. Offshore wind leader. Low breakeven.",metrics:{mkt_cap:85000,pe_fwd:10.5,oper_margin:28.3,fcf_yield:10.2,net_debt_ebitda:0.1}},
-  {ticker:"CNQ",name:"Canadian Natural",sector:"Producer",verdict:"long",currentPrice:28,prices:[15,19,23,30,36,44,55],sens:{t_oilprice:.9,t_opec:.4,t_transition:-.5,t_rates:-.3,t_china:.3,t_capex:.8},thesis:"Oil sands. Lowest decline rate in NA. FCF machine.",metrics:{mkt_cap:58000,pe_fwd:11.2,oper_margin:18.5,fcf_yield:8.8,net_debt_ebitda:0.6}},
-  {ticker:"SU",name:"Suncor Energy",sector:"Producer",verdict:"long",currentPrice:55,prices:[32,39,47,59,70,84,105],sens:{t_oilprice:.8,t_opec:.4,t_transition:-.4,t_rates:-.2,t_china:.3,t_capex:.7},thesis:"Integrated oil sands + refining. Self-help story. Buybacks.",metrics:{mkt_cap:68000,pe_fwd:10.8,oper_margin:15.2,fcf_yield:9.5,net_debt_ebitda:0.5}},
-  {ticker:"VET",name:"Vermilion Energy",sector:"Producer",verdict:"long",currentPrice:9.5,prices:[4,5.5,7.5,11,14,18,24],sens:{t_oilprice:.9,t_opec:.5,t_transition:-.6,t_rates:-.4,t_china:.4,t_capex:.6},thesis:"Diversified international E&P. European gas exposure. High leverage upside.",metrics:{mkt_cap:1500,pe_fwd:5.8,oper_margin:22.1,fcf_yield:15.2,net_debt_ebitda:1.8}},
-  {ticker:"BP",name:"BP",sector:"Integrated",verdict:"short",currentPrice:39,prices:[18,24,31,38,48,58,72],sens:{t_oilprice:-.5,t_opec:-.4,t_transition:.3,t_rates:.3,t_china:-.3,t_capex:-.7},thesis:"Strategy confusion. Transition flip-flop. Weak FCF vs peers.",metrics:{mkt_cap:85000,pe_fwd:7.5,oper_margin:5.8,fcf_yield:4.2,net_debt_ebitda:1.2}},
-  {ticker:"OXY",name:"Occidental",sector:"Producer",verdict:"short",currentPrice:46,prices:[22,30,38,48,56,66,80],sens:{t_oilprice:-.6,t_opec:-.3,t_transition:-.2,t_rates:.2,t_china:-.2,t_capex:-.8},thesis:"Buffett overhang. CrownRock leverage. Carbon capture unproven.",metrics:{mkt_cap:38000,pe_fwd:15.2,oper_margin:8.5,fcf_yield:5.1,net_debt_ebitda:2.1}},
-  {ticker:"RIG",name:"Transocean",sector:"Services",verdict:"short",currentPrice:3.8,prices:[1,1.8,2.8,4,5.5,7.5,10],sens:{t_oilprice:-.8,t_opec:-.5,t_transition:-.6,t_rates:.5,t_china:-.4,t_capex:-.5},thesis:"Offshore drilling structural decline. Massive debt. Equity dilution risk.",metrics:{mkt_cap:2800,pe_fwd:0,oper_margin:-2.1,fcf_yield:-5.5,net_debt_ebitda:8.5}},
-  {ticker:"HAL",name:"Halliburton",sector:"Services",verdict:"short",currentPrice:24,prices:[12,16,20,25,30,36,44],sens:{t_oilprice:-.6,t_opec:-.4,t_transition:-.3,t_rates:.2,t_china:-.3,t_capex:-.4},thesis:"OFS cycle peak. NA activity declining. International slower than expected.",metrics:{mkt_cap:21000,pe_fwd:10.2,oper_margin:12.8,fcf_yield:7.5,net_debt_ebitda:1.1}},
-  {ticker:"PBR",name:"Petrobras",sector:"EM Producer",verdict:"short",currentPrice:15,prices:[7,9.5,12.5,15.5,19,23,28],sens:{t_oilprice:-.5,t_opec:-.3,t_transition:-.1,t_rates:.4,t_china:-.5,t_capex:-.3},thesis:"Political interference. Dividend policy uncertainty. EM risk premium.",metrics:{mkt_cap:95000,pe_fwd:5.2,oper_margin:38.5,fcf_yield:12.1,net_debt_ebitda:1.0}},
-];
-
-const JACK_STOCKS=[
-  {ticker:"NVDA",name:"NVIDIA",sector:"AI Compute",verdict:"long",currentPrice:183,prices:[95,125,155,200,240,290,360],sens:{j_aicapex:.9,j_china:-.4,j_rates:-.3,j_consumer:.3,j_foundry:.6,j_regulation:-.4},thesis:"AI compute monopoly. Data centre GPU 80%+ share. Blackwell ramp.",metrics:{mkt_cap:4500000,pe_fwd:35.2,oper_margin:62.1,fcf_yield:2.8,net_debt_ebitda:0.1}},
-  {ticker:"TSM",name:"TSMC",sector:"Foundry",verdict:"long",currentPrice:366,prices:[200,260,320,400,475,560,680],sens:{j_aicapex:.7,j_china:-.6,j_rates:-.2,j_consumer:.4,j_foundry:.9,j_regulation:-.2},thesis:"Foundry monopoly. 2nm sold out. All AI roads lead through TSMC.",metrics:{mkt_cap:950000,pe_fwd:22.5,oper_margin:48.2,fcf_yield:3.2,net_debt_ebitda:0.2}},
-  {ticker:"AVGO",name:"Broadcom",sector:"Custom ASIC",verdict:"long",currentPrice:325,prices:[180,235,285,355,420,500,620],sens:{j_aicapex:.8,j_china:-.3,j_rates:-.3,j_consumer:.2,j_foundry:.5,j_regulation:-.3},thesis:"Custom ASIC for Google/Meta. VMware integration. Diversified moat.",metrics:{mkt_cap:1520000,pe_fwd:30.8,oper_margin:45.5,fcf_yield:3.5,net_debt_ebitda:1.2}},
-  {ticker:"ASML",name:"ASML",sector:"Equipment",verdict:"long",currentPrice:1407,prices:[800,1000,1200,1500,1750,2050,2500],sens:{j_aicapex:.6,j_china:-.5,j_rates:-.3,j_consumer:.2,j_foundry:.8,j_regulation:-.2},thesis:"EUV monopoly. Every advanced chip needs ASML. 2nm tailwind.",metrics:{mkt_cap:570000,pe_fwd:32.1,oper_margin:35.8,fcf_yield:2.5,net_debt_ebitda:0.1}},
-  {ticker:"AMAT",name:"Applied Materials",sector:"Equipment",verdict:"long",currentPrice:180,prices:[105,130,158,195,230,275,340],sens:{j_aicapex:.5,j_china:-.5,j_rates:-.2,j_consumer:.3,j_foundry:.7,j_regulation:-.1},thesis:"Deposition & etch leader. Fab buildout beneficiary. China exposure manageable.",metrics:{mkt_cap:148000,pe_fwd:20.5,oper_margin:29.2,fcf_yield:4.1,net_debt_ebitda:0.3}},
-  {ticker:"MRVL",name:"Marvell Tech",sector:"Custom ASIC",verdict:"long",currentPrice:105,prices:[50,68,88,115,140,175,220],sens:{j_aicapex:.8,j_china:-.2,j_rates:-.4,j_consumer:.2,j_foundry:.4,j_regulation:-.3},thesis:"Custom silicon for cloud. 5G, auto, data centre. AWS/MSFT relationships.",metrics:{mkt_cap:91000,pe_fwd:38.5,oper_margin:18.2,fcf_yield:2.2,net_debt_ebitda:0.8}},
-  {ticker:"ALAB",name:"Astera Labs",sector:"Connectivity",verdict:"long",currentPrice:95,prices:[35,52,72,105,140,185,250],sens:{j_aicapex:.9,j_china:-.1,j_rates:-.5,j_consumer:.1,j_foundry:.5,j_regulation:-.2},thesis:"AI connectivity fabric. PCIe/CXL switches. Pure-play AI infrastructure.",metrics:{mkt_cap:15000,pe_fwd:85.2,oper_margin:22.5,fcf_yield:0.8,net_debt_ebitda:0}},
-  {ticker:"MU",name:"Micron",sector:"Memory",verdict:"long",currentPrice:98,prices:[52,68,82,108,130,160,200],sens:{j_aicapex:.7,j_china:-.3,j_rates:-.3,j_consumer:.5,j_foundry:.6,j_regulation:-.1},thesis:"HBM3e for AI. Memory supercycle. Consolidated industry structure.",metrics:{mkt_cap:108000,pe_fwd:12.8,oper_margin:25.5,fcf_yield:5.2,net_debt_ebitda:0.5}},
-  {ticker:"AMD",name:"AMD",sector:"GPU/CPU",verdict:"short",currentPrice:207,prices:[100,135,175,215,260,310,380],sens:{j_aicapex:-.3,j_china:.2,j_rates:.2,j_consumer:-.2,j_foundry:-.3,j_regulation:.2},thesis:"MI300 losing GPU ground to NVIDIA. CPU margin pressure. Over-hyped AI narrative.",metrics:{mkt_cap:335000,pe_fwd:28.5,oper_margin:22.1,fcf_yield:2.8,net_debt_ebitda:0.3}},
-  {ticker:"INTC",name:"Intel",sector:"Foundry/CPU",verdict:"short",currentPrice:24,prices:[10,14,19,25,32,40,52],sens:{j_aicapex:-.4,j_china:.3,j_rates:.3,j_consumer:-.1,j_foundry:-.6,j_regulation:.1},thesis:"Foundry execution risk. Losing process leadership. Cash burn.",metrics:{mkt_cap:103000,pe_fwd:0,oper_margin:-1.2,fcf_yield:-8.5,net_debt_ebitda:2.8}},
-  {ticker:"QCOM",name:"Qualcomm",sector:"Mobile/Edge",verdict:"short",currentPrice:168,prices:[90,120,148,175,205,240,285],sens:{j_aicapex:-.2,j_china:.4,j_rates:.2,j_consumer:-.4,j_foundry:-.2,j_regulation:.3},thesis:"Mobile maturity. ARM dispute. Edge AI not replacing data centre.",metrics:{mkt_cap:188000,pe_fwd:15.8,oper_margin:28.5,fcf_yield:5.5,net_debt_ebitda:1.1}},
-  {ticker:"ARM",name:"ARM Holdings",sector:"IP/Licensing",verdict:"short",currentPrice:172,prices:[80,110,145,180,220,270,340],sens:{j_aicapex:-.2,j_china:.1,j_rates:.3,j_consumer:-.3,j_foundry:-.2,j_regulation:.4},thesis:"Valuation extreme. Licensing model revenue uncertainty. SoftBank overhang.",metrics:{mkt_cap:178000,pe_fwd:92.5,oper_margin:25.8,fcf_yield:0.8,net_debt_ebitda:0}},
-  {ticker:"SMCI",name:"Super Micro",sector:"Servers",verdict:"short",currentPrice:40,prices:[12,20,30,42,58,78,105],sens:{j_aicapex:-.5,j_china:.2,j_rates:.3,j_consumer:-.1,j_foundry:-.4,j_regulation:.3},thesis:"Accounting issues. 15.5% short interest. Dell/HPE competing. Governance risk.",metrics:{mkt_cap:24000,pe_fwd:12.5,oper_margin:8.2,fcf_yield:-2.5,net_debt_ebitda:0.8}},
-];
-
-const BOON_STOCKS=[
-  {ticker:"V",name:"Visa",sector:"Networks",verdict:"long",currentPrice:340,prices:[220,260,300,365,420,485,570],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.5},thesis:"Network moat. 65%+ operating margins. Cross-border recovery.",metrics:{mkt_cap:580000,pe_fwd:28.5,oper_margin:67.2,fcf_yield:3.8,net_debt_ebitda:0.5}},
-  {ticker:"MA",name:"Mastercard",sector:"Networks",verdict:"long",currentPrice:518,prices:[340,400,465,555,640,740,870],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.6},thesis:"Duopoly network. Services revenue growing. Multi-rail strategy.",metrics:{mkt_cap:475000,pe_fwd:32.1,oper_margin:58.5,fcf_yield:3.2,net_debt_ebitda:0.8}},
-  {ticker:"ADYEN.AS",name:"Adyen",sector:"Processing",verdict:"long",currentPrice:1520,prices:[800,1050,1300,1650,1950,2350,2900],sens:{b_digital:.9,b_rates:-.2,b_consumer:.5,b_regulation:-.3,b_crypto:.2,b_em:.7},thesis:"Unified commerce. Enterprise processor. Take rate expansion.",metrics:{mkt_cap:48000,pe_fwd:52.5,oper_margin:46.2,fcf_yield:1.8,net_debt_ebitda:0}},
-  {ticker:"SOFI",name:"SoFi Technologies",sector:"Neobank",verdict:"long",currentPrice:19.7,prices:[8,12,16,22,28,36,48],sens:{b_digital:.6,b_rates:-.6,b_consumer:.4,b_regulation:-.2,b_crypto:.5,b_em:.3},thesis:"Bank charter. Student loans + investing + banking. Path to profitability.",metrics:{mkt_cap:22000,pe_fwd:48.5,oper_margin:5.2,fcf_yield:1.5,net_debt_ebitda:2.5}},
-  {ticker:"MELI",name:"MercadoLibre",sector:"EM Payments",verdict:"long",currentPrice:2050,prices:[1100,1400,1750,2200,2650,3200,4000],sens:{b_digital:.7,b_rates:-.3,b_consumer:.5,b_regulation:-.2,b_crypto:.4,b_em:.9},thesis:"LatAm fintech + ecommerce. Mercado Pago dominance. Financial inclusion.",metrics:{mkt_cap:106000,pe_fwd:42.5,oper_margin:14.8,fcf_yield:2.2,net_debt_ebitda:0.3}},
-  {ticker:"COIN",name:"Coinbase",sector:"Crypto Infra",verdict:"long",currentPrice:265,prices:[100,155,215,290,380,500,680],sens:{b_digital:.3,b_rates:-.4,b_consumer:.2,b_regulation:-.3,b_crypto:.9,b_em:.2},thesis:"Crypto infrastructure. Base L2. Institutional custody. Regulatory clarity beneficiary.",metrics:{mkt_cap:68000,pe_fwd:28.5,oper_margin:22.5,fcf_yield:3.5,net_debt_ebitda:0.2}},
-  {ticker:"AFRM",name:"Affirm",sector:"BNPL",verdict:"long",currentPrice:62,prices:[22,35,48,68,90,120,165],sens:{b_digital:.7,b_rates:-.7,b_consumer:.6,b_regulation:-.4,b_crypto:.3,b_em:.4},thesis:"BNPL leader. Amazon partnership. Credit performance improving.",metrics:{mkt_cap:20000,pe_fwd:0,oper_margin:-5.2,fcf_yield:-2.1,net_debt_ebitda:3.5}},
-  {ticker:"NU",name:"Nu Holdings",sector:"EM Neobank",verdict:"long",currentPrice:12.5,prices:[5.5,7.5,10,13.5,17,22,29],sens:{b_digital:.7,b_rates:-.4,b_consumer:.5,b_regulation:-.2,b_crypto:.3,b_em:.8},thesis:"Brazil + LatAm neobank. 100M+ customers. NIM expansion.",metrics:{mkt_cap:58000,pe_fwd:28.2,oper_margin:18.5,fcf_yield:2.8,net_debt_ebitda:0}},
-  {ticker:"PYPL",name:"PayPal",sector:"Digital Wallet",verdict:"short",currentPrice:40,prices:[18,25,33,42,52,64,80],sens:{b_digital:-.3,b_rates:.2,b_consumer:-.2,b_regulation:.3,b_crypto:-.1,b_em:-.2},thesis:"CEO change. Market share loss. Venmo monetisation struggles. Down from $79 high.",metrics:{mkt_cap:42000,pe_fwd:10.5,oper_margin:15.8,fcf_yield:8.5,net_debt_ebitda:0.5}},
-  {ticker:"XYZ",name:"Block (Square)",sector:"Payments",verdict:"short",currentPrice:72,prices:[32,45,58,75,92,115,145],sens:{b_digital:-.2,b_rates:.1,b_consumer:-.3,b_regulation:.2,b_crypto:.4,b_em:-.1},thesis:"Cash App growth slowing. Square ecosystem fragmented. Bitcoin exposure volatile.",metrics:{mkt_cap:44000,pe_fwd:22.5,oper_margin:5.8,fcf_yield:3.2,net_debt_ebitda:1.2}},
-  {ticker:"FIS",name:"Fidelity Nat'l Info",sector:"Legacy Infra",verdict:"short",currentPrice:78,prices:[45,55,66,80,92,108,128],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.1,b_regulation:.4,b_crypto:-.2,b_em:-.3},thesis:"Legacy bank tech. Worldpay separation overhang. Disruption target.",metrics:{mkt_cap:42000,pe_fwd:12.8,oper_margin:22.5,fcf_yield:5.5,net_debt_ebitda:2.1}},
-  {ticker:"GPN",name:"Global Payments",sector:"Legacy Infra",verdict:"short",currentPrice:95,prices:[52,65,80,98,115,135,160],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.2,b_regulation:.4,b_crypto:-.1,b_em:-.3},thesis:"Legacy merchant acquiring. Integration complexity. Stripe/Adyen eating share.",metrics:{mkt_cap:25000,pe_fwd:9.8,oper_margin:18.2,fcf_yield:6.8,net_debt_ebitda:2.8}},
-  {ticker:"WU",name:"Western Union",sector:"Remittance",verdict:"short",currentPrice:11,prices:[5,6.5,8.5,11,14,17,21],sens:{b_digital:-.8,b_rates:.2,b_consumer:-.3,b_regulation:.3,b_crypto:-.2,b_em:-.7},thesis:"Remittance dying. Wise/Remitly disrupting. Structural decline.",metrics:{mkt_cap:3800,pe_fwd:6.2,oper_margin:18.5,fcf_yield:12.2,net_debt_ebitda:2.5}},
-];
-
-const OZ_STOCKS=[
-  {ticker:"LLY",name:"Eli Lilly",sector:"GLP-1 Leader",verdict:"long",currentPrice:920,prices:[580,680,800,985,1150,1350,1600],sens:{o_glp1:.9,o_pipeline:.7,o_pricing:-.4,o_rates:-.2,o_ma:.3,o_aging:.6},thesis:"GLP-1 king. Mounjaro + Zepbound. Pipeline depth across obesity, Alzheimer's.",metrics:{mkt_cap:870000,pe_fwd:55.2,oper_margin:32.5,fcf_yield:1.8,net_debt_ebitda:1.2}},
-  {ticker:"ISRG",name:"Intuitive Surgical",sector:"Robotics",verdict:"long",currentPrice:580,prices:[340,410,500,625,740,880,1050],sens:{o_glp1:.2,o_pipeline:.5,o_pricing:-.2,o_rates:-.3,o_ma:.4,o_aging:.8},thesis:"da Vinci monopoly. Ion lung biopsy. Procedure volume growth secular.",metrics:{mkt_cap:208000,pe_fwd:62.5,oper_margin:32.8,fcf_yield:1.5,net_debt_ebitda:0}},
-  {ticker:"VRTX",name:"Vertex Pharma",sector:"Rare Disease",verdict:"long",currentPrice:455,prices:[280,340,400,490,570,670,800],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.2,o_ma:.5,o_aging:.4},thesis:"CF monopoly. Pain pipeline. Casgevy gene therapy. Diversifying.",metrics:{mkt_cap:118000,pe_fwd:28.5,oper_margin:42.5,fcf_yield:3.2,net_debt_ebitda:0.1}},
-  {ticker:"REGN",name:"Regeneron",sector:"Biologics",verdict:"long",currentPrice:710,prices:[440,530,630,760,880,1030,1220],sens:{o_glp1:.2,o_pipeline:.7,o_pricing:-.3,o_rates:-.1,o_ma:.4,o_aging:.5},thesis:"Dupixent blockbuster. Eylea franchise. R&D machine with Libtayo.",metrics:{mkt_cap:78000,pe_fwd:22.8,oper_margin:35.2,fcf_yield:4.5,net_debt_ebitda:0}},
-  {ticker:"TMO",name:"Thermo Fisher",sector:"Life Sciences",verdict:"long",currentPrice:540,prices:[340,410,480,575,665,780,920],sens:{o_glp1:.3,o_pipeline:.4,o_pricing:-.1,o_rates:-.3,o_ma:.6,o_aging:.6},thesis:"Life sciences picks and shovels. M&A roll-up. Biopharma recovery.",metrics:{mkt_cap:205000,pe_fwd:25.5,oper_margin:22.8,fcf_yield:3.8,net_debt_ebitda:2.1}},
-  {ticker:"DXCM",name:"DexCom",sector:"MedTech/CGM",verdict:"long",currentPrice:82,prices:[38,52,68,90,115,145,185],sens:{o_glp1:.7,o_pipeline:.5,o_pricing:-.3,o_rates:-.4,o_ma:.3,o_aging:.7},thesis:"CGM for obesity management. Stelo OTC expansion. GLP-1 companion device.",metrics:{mkt_cap:32000,pe_fwd:42.5,oper_margin:18.5,fcf_yield:2.2,net_debt_ebitda:1.5}},
-  {ticker:"ARGX",name:"argenx",sector:"Biotech",verdict:"long",currentPrice:680,prices:[350,450,570,730,880,1060,1300],sens:{o_glp1:.1,o_pipeline:.9,o_pricing:-.2,o_rates:-.3,o_ma:.6,o_aging:.3},thesis:"Vyvgart blockbuster. Autoimmune pipeline. Best-in-class FcRn.",metrics:{mkt_cap:42000,pe_fwd:45.2,oper_margin:15.8,fcf_yield:1.2,net_debt_ebitda:0}},
-  {ticker:"ALNY",name:"Alnylam Pharma",sector:"RNAi",verdict:"long",currentPrice:265,prices:[130,175,225,290,355,430,530],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.3,o_ma:.5,o_aging:.4},thesis:"RNAi platform. Amvuttra + Onpattro. Cardio pipeline catalyst.",metrics:{mkt_cap:35000,pe_fwd:0,oper_margin:-8.5,fcf_yield:-3.2,net_debt_ebitda:1.8}},
-  {ticker:"NVO",name:"Novo Nordisk",sector:"GLP-1/Pricing",verdict:"short",currentPrice:50,prices:[25,32,40,52,65,82,105],sens:{o_glp1:-.4,o_pipeline:-.3,o_pricing:.5,o_rates:.2,o_ma:-.2,o_aging:-.1},thesis:"Down 40% YoY. 2026 guidance -5% to -13% sales. CagriSema Phase 3 miss. Pricing pressure.",metrics:{mkt_cap:230000,pe_fwd:18.5,oper_margin:42.5,fcf_yield:5.2,net_debt_ebitda:0.5}},
-  {ticker:"UNH",name:"UnitedHealth",sector:"Managed Care",verdict:"short",currentPrice:470,prices:[280,340,410,485,560,640,740],sens:{o_glp1:-.3,o_pipeline:-.1,o_pricing:.6,o_rates:.3,o_ma:-.2,o_aging:.3},thesis:"Down 35% since Jan. DOJ investigation. GLP-1 cost headwinds. Optum scrutiny.",metrics:{mkt_cap:430000,pe_fwd:16.5,oper_margin:8.5,fcf_yield:4.8,net_debt_ebitda:1.5}},
-  {ticker:"PFE",name:"Pfizer",sector:"Big Pharma",verdict:"short",currentPrice:26,prices:[14,18,22,27,32,38,46],sens:{o_glp1:-.2,o_pipeline:-.4,o_pricing:.4,o_rates:.3,o_ma:-.3,o_aging:-.2},thesis:"Post-COVID cliff. Patent expirations. Pipeline gaps. Seagen integration uncertain.",metrics:{mkt_cap:148000,pe_fwd:10.2,oper_margin:12.5,fcf_yield:6.8,net_debt_ebitda:2.5}},
-  {ticker:"MRNA",name:"Moderna",sector:"mRNA Platform",verdict:"short",currentPrice:32,prices:[12,18,25,34,48,68,95],sens:{o_glp1:-.1,o_pipeline:-.5,o_pricing:.3,o_rates:.4,o_ma:-.2,o_aging:-.3},thesis:"9.5% short interest. mRNA pipeline beyond COVID uncertain. Cash burn.",metrics:{mkt_cap:12500,pe_fwd:0,oper_margin:-55.2,fcf_yield:-18.5,net_debt_ebitda:0}},
-  {ticker:"CVS",name:"CVS Health",sector:"Pharmacy/PBM",verdict:"short",currentPrice:56,prices:[32,40,48,58,68,80,95],sens:{o_glp1:-.2,o_pipeline:-.1,o_pricing:.6,o_rates:.2,o_ma:-.3,o_aging:.2},thesis:"PBM reform risk. Pharmacy margin pressure. Aetna integration drag.",metrics:{mkt_cap:72000,pe_fwd:8.5,oper_margin:4.2,fcf_yield:8.2,net_debt_ebitda:3.2}},
-];
-
-const DEFAULT_MODELS=[
-  {id:"tig",name:"Tig",teamId:"travel",type:"internal",description:"K-shape travel divergence. 7-scenario probability engine.",created:"2025-02-16",driverMap:TIG_DRIVER_MAP,stocks:TIG_STOCKS},
-  {id:"rone",name:"Rone",teamId:"defence",type:"internal",description:"NATO rearmament supercycle. 7-scenario probability engine.",created:"2025-02-16",driverMap:RONE_DRIVER_MAP,stocks:RONE_STOCKS},
-  {id:"tanto",name:"Tanto",teamId:"energy",type:"internal",description:"Energy transition divergence. Capex discipline vs commodity trap.",created:"2025-02-17",driverMap:TANTO_DRIVER_MAP,stocks:TANTO_STOCKS},
-  {id:"jack",name:"Jack",teamId:"semiconductors",type:"internal",description:"AI capex supercycle. Infrastructure winners vs share losers.",created:"2025-02-17",driverMap:JACK_DRIVER_MAP,stocks:JACK_STOCKS},
-  {id:"boon",name:"Boon",teamId:"fintech",type:"internal",description:"Digital payments revolution. Network moats vs disruption casualties.",created:"2025-02-17",driverMap:BOON_DRIVER_MAP,stocks:BOON_STOCKS},
-  {id:"oz",name:"Oz",teamId:"healthcare",type:"internal",description:"GLP-1 & innovation pipeline. Obesity revolution meets pricing reality.",created:"2025-02-17",driverMap:OZ_DRIVER_MAP,stocks:OZ_STOCKS},
-];
+/* ═══════════════ COMPUTE OPERATOR STATS ═══════════════ */
+function computeOpStats(op, globalDrivers) {
+  const results = op.stocks.map(s => {
+    const eng = runEngine(s, op.driverMap, globalDrivers);
+    return { ...s, eng };
+  });
+  const longs = results.filter(s => s.verdict === 'long');
+  const shorts = results.filter(s => s.verdict === 'short');
+  const avgLongRR = longs.length ? longs.reduce((a,s) => a + (s.eng?.rr||0), 0) / longs.length : 0;
+  const avgShortRR = shorts.length ? shorts.reduce((a,s) => a + (s.eng?.rr||0), 0) / shorts.length : 0;
+  const avgSkew = results.length ? results.reduce((a,s) => a + (s.eng?.skew||0), 0) / results.length : 0;
+  const bullPct = globalDrivers.filter(d => op.drivers.some(od => od.id === d.id) && d.signal > 0.3).length;
+  const totalD = op.drivers.length;
+  let regime = 'NEUTRAL';
+  if (avgLongRR > 10) regime = 'BULLISH';
+  if (avgLongRR > 20) regime = 'STRONG BULL';
+  if (avgLongRR < -5) regime = 'BEARISH';
+  if (avgLongRR < -15) regime = 'STRONG BEAR';
+  return { results, longs: longs.length, shorts: shorts.length, avgLongRR, avgShortRR, avgSkew, bullPct, totalD, regime };
+}
 
 /* ═══════════════ MICRO COMPONENTS ═══════════════ */
 function Badge({children,color,small,style:sx}){return<span style={{display:'inline-flex',alignItems:'center',padding:small?'1px 6px':'2px 8px',borderRadius:3,fontSize:small?9:10,fontWeight:700,fontFamily:'var(--mono)',letterSpacing:'.04em',background:`${color}15`,color,border:`1px solid ${color}35`,...sx}}>{children}</span>}
 function Btn({children,onClick,active,color,style:sx,...p}){const c=color||'var(--fg3)';return<button onClick={onClick} style={{padding:'6px 12px',borderRadius:4,cursor:'pointer',fontSize:11,fontFamily:'var(--mono)',fontWeight:600,transition:'all .15s',border:`1px solid ${active?c+'60':'var(--border)'}`,background:active?c+'12':'transparent',color:active?c:'var(--fg4)',...sx}} {...p}>{children}</button>}
-function Label({children,right}){return<div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><span style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em'}}>{children}</span>{right}</div>}
-function StageBadge({n,label}){return<div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}><span style={{width:22,height:22,borderRadius:'50%',background:'var(--g)15',border:'1px solid var(--g)40',color:'var(--g)',fontSize:10,fontWeight:700,fontFamily:'var(--mono)',display:'flex',alignItems:'center',justifyContent:'center'}}>{n}</span><span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em'}}>{label}</span></div>}
 
-/* ═══════════════ SIDEBAR ═══════════════ */
-function Sidebar({teams,models,selected,onSelect,onNewModel,onNewTeam}){
-  const grouped=useMemo(()=>{const g={};teams.forEach(t=>g[t.id]=[]);models.forEach(m=>{if(g[m.teamId])g[m.teamId].push(m)});return g},[teams,models]);
-  const NI=({active,color,icon,label,count,onClick,stage})=><div onClick={onClick} style={{padding:'9px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:8,fontSize:12,fontWeight:600,color:active?'var(--fg)':'var(--fg3)',background:active?'var(--bg2)':'transparent',borderLeft:active?`3px solid ${color||'var(--g)'}`:'3px solid transparent',transition:'all .12s'}}>{stage&&<span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',width:10,textAlign:'right'}}>{stage}</span>}{icon&&<span style={{fontSize:13,width:16,textAlign:'center'}}>{icon}</span>}<span style={{fontFamily:'var(--mono)',flex:1}}>{label}</span>{count!==undefined&&<span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{count}</span>}</div>;
-
-  return<div style={{width:'var(--sidebar-w)',background:'var(--bg1)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',height:'100vh',flexShrink:0}}>
-    <div style={{padding:'16px 16px 12px',borderBottom:'1px solid var(--border)'}}>
-      <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <div style={{width:8,height:8,borderRadius:'50%',background:'var(--g)',boxShadow:'0 0 8px var(--g)',animation:'pulse 2s infinite'}}/>
-        <div style={{fontSize:22,fontFamily:'var(--mono)',fontWeight:700,color:'var(--g)',letterSpacing:'-.02em'}}>UPSIDE</div>
-      </div>
-      <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',marginTop:2,letterSpacing:'.05em'}}>XA COMMAND CENTRE</div>
+/* ═══════════════ HEADER ═══════════════ */
+function Header({view, setView}) {
+  const navItems = [
+    {id:'overview', label:'Overview', icon:'◉'},
+    {id:'macro', label:'Macro Dashboard', icon:'⚡'},
+    {id:'operators', label:'Operators', icon:'◆'},
+    {id:'export', label:'Export', icon:'↓'},
+  ];
+  return <div style={{background:'var(--bg1)',borderBottom:'1px solid var(--border2)',padding:'0 28px',display:'flex',alignItems:'center',gap:0,height:52,flexShrink:0}}>
+    <div style={{display:'flex',alignItems:'center',gap:10,marginRight:40}}>
+      <div style={{width:8,height:8,borderRadius:'50%',background:'var(--g)',boxShadow:'0 0 8px var(--g)',animation:'pulse 2s infinite'}}/>
+      <span style={{fontSize:20,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)',letterSpacing:'-.02em'}}>XA</span>
+      <span style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)',letterSpacing:'.05em'}}>powered by Upside</span>
     </div>
-    <div style={{flex:1,overflowY:'auto',padding:'8px 0'}}>
-      <NI active={selected.type==='overview'} color="var(--fg2)" icon="◉" label="Overview" onClick={()=>onSelect({type:'overview'})}/>
-      <div style={{height:1,background:'var(--border)',margin:'6px 16px'}}/>
-      <div style={{padding:'4px 16px 4px',fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:'.12em',textTransform:'uppercase'}}>Pipeline</div>
-      <NI active={selected.type==='macro'} color="var(--y)" icon="⚡" label="Macro Env" stage="1" onClick={()=>onSelect({type:'macro'})}/>
-      <div style={{height:1,background:'var(--border)',margin:'6px 16px'}}/>
-      <div style={{padding:'4px 16px 4px',fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:'.12em',textTransform:'uppercase'}}>GRS Operators</div>
-      {teams.map(team=><div key={team.id}>
-        <NI active={selected.type==='team'&&selected.id===team.id} color={team.color} icon={team.icon} label={team.name} count={(grouped[team.id]||[]).length} onClick={()=>onSelect({type:'team',id:team.id})}/>
-        {(grouped[team.id]||[]).map(m=><div key={m.id} onClick={()=>onSelect({type:'model',id:m.id})} style={{padding:'7px 16px 7px 44px',cursor:'pointer',fontSize:11,fontFamily:'var(--mono)',color:selected.type==='model'&&selected.id===m.id?'var(--fg)':'var(--fg4)',background:selected.type==='model'&&selected.id===m.id?'var(--bg2)':'transparent',borderLeft:selected.type==='model'&&selected.id===m.id?`3px solid ${team.color}`:'3px solid transparent',transition:'all .1s'}}>● {m.name}<span style={{marginLeft:6,fontSize:9,color:'var(--fg4)'}}>{(m.stocks||[]).length}</span></div>)}
+    <div style={{display:'flex',gap:2}}>
+      {navItems.map(n => <button key={n.id} onClick={() => setView(n.id)} style={{
+        padding:'14px 16px',fontSize:11,fontFamily:'var(--mono)',fontWeight:600,cursor:'pointer',
+        border:'none',background:'transparent',color:view===n.id?'var(--fg)':'var(--fg4)',
+        borderBottom:view===n.id?'2px solid var(--g)':'2px solid transparent',
+        transition:'all .15s'
+      }}>{n.icon} {n.label}</button>)}
+    </div>
+  </div>;
+}
+
+/* ═══════════════ OVERVIEW ═══════════════ */
+function OverviewView({operators, globalDrivers}) {
+  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
+  const totalNames = allStats.reduce((a,o) => a + o.stocks.length, 0);
+  const totalLongs = allStats.reduce((a,o) => a + o.stats.longs, 0);
+  const totalShorts = allStats.reduce((a,o) => a + o.stats.shorts, 0);
+  const totalDrivers = allStats.reduce((a,o) => a + o.drivers.length, 0);
+  const bullOps = allStats.filter(o => o.stats.avgLongRR > 8).length;
+
+  return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:32}}>
+      <h1 style={{fontSize:32,fontFamily:'var(--serif)',color:'var(--fg)',fontWeight:400,marginBottom:6}}>Command Centre</h1>
+      <p style={{fontSize:13,color:'var(--fg3)'}}>GRS Price Target Engine — {operators.length} operators across {new Set(operators.map(o=>o.team)).size} sectors</p>
+    </div>
+
+    {/* Stats Row */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12,marginBottom:32}}>
+      {[
+        ['Operators', operators.length, 'var(--fg)'],
+        ['Total Names', totalNames, 'var(--b)'],
+        ['Longs', totalLongs, 'var(--g)'],
+        ['Shorts', totalShorts, 'var(--r)'],
+        ['Macro Drivers', totalDrivers, 'var(--y)'],
+        ['Bull Operators', bullOps+'/'+operators.length, 'var(--g2)'],
+      ].map(([l,v,c]) => <div key={l} style={{padding:'16px 18px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
+        <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>{l}</div>
+        <div style={{fontSize:22,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
       </div>)}
-      <div style={{height:1,background:'var(--border)',margin:'6px 16px'}}/>
-      <NI active={selected.type==='export'} color="var(--b)" icon="↓" label="Export Centre" stage="7" onClick={()=>onSelect({type:'export'})}/>
     </div>
-    <div style={{padding:12,borderTop:'1px solid var(--border)',display:'flex',gap:6}}>
-      <Btn onClick={onNewModel} active color="var(--g)" style={{flex:1,fontSize:10}}>+ Model</Btn>
-      <Btn onClick={onNewTeam} style={{fontSize:10}}>+ Team</Btn>
+
+    {/* Operator Cards */}
+    <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:12}}>Operator Status</div>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:14}}>
+      {allStats.map(op => {
+        const s = op.stats;
+        const regimeColor = s.regime.includes('BULL') ? 'var(--g)' : s.regime.includes('BEAR') ? 'var(--r)' : 'var(--fg3)';
+        return <div key={op.id} style={{background:'var(--bg2)',border:`1px solid ${op.color}20`,borderRadius:8,overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <span style={{fontSize:20}}>{op.icon}</span>
+                <div>
+                  <span style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+                  <span style={{fontSize:11,color:'var(--fg4)',marginLeft:8}}>{op.team}</span>
+                </div>
+              </div>
+              <Badge color={regimeColor} small>{s.regime}</Badge>
+            </div>
+            <div style={{fontSize:11,color:'var(--fg3)',marginBottom:8}}>{op.desc}</div>
+          </div>
+          <div style={{padding:'12px 20px',display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>L / S</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600}}><span style={{color:'var(--g)'}}>{s.longs}</span><span style={{color:'var(--fg4)'}}> / </span><span style={{color:'var(--r)'}}>{s.shorts}</span></div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg R/R</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgLongRR>0?'var(--g)':'var(--r)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
+          </div>
+          <div style={{padding:'8px 20px 14px'}}>
+            <a href={op.file} target="_blank" rel="noopener" style={{display:'block',textAlign:'center',padding:'8px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,textDecoration:'none',transition:'all .15s'}}>
+              Open {op.name} Engine →
+            </a>
+          </div>
+        </div>;
+      })}
     </div>
   </div>;
 }
 
-/* ═══════════════ VIEW: OVERVIEW ═══════════════ */
-function OverviewView({teams,models,globalDrivers,onSelect}){
-  const totalS=models.reduce((a,m)=>a+(m.stocks||[]).length,0);
-  const totalL=models.reduce((a,m)=>a+(m.stocks||[]).filter(s=>s.verdict==='long').length,0);
-  const bullDrivers=globalDrivers.filter(d=>d.signal>0.3).length;
-  return<div style={{padding:28,animation:'fadeIn .3s ease'}}>
-    <div style={{marginBottom:28}}>
-      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--fg)',fontWeight:400,marginBottom:4}}>Command Centre</h1>
-      <p style={{fontSize:13,color:'var(--fg3)'}}>GRS Price Target Engine — 6 operators, 80 names, 36 macro drivers</p>
-    </div>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:28}}>
-      {[['Models',models.length,'var(--fg)'],['Total Names',totalS,'var(--b)'],['Longs',totalL,'var(--g)'],['Shorts',totalS-totalL,'var(--r)'],['Bull Drivers',bullDrivers+'/'+globalDrivers.length,'var(--y)']].map(([l,v,c])=>
-        <div key={l} style={{padding:'16px 18px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
-          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>{l}</div>
-          <div style={{fontSize:24,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
-        </div>
-      )}
-    </div>
-    <Label>Pipeline Stages</Label>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:6,marginBottom:28}}>
-      {[['1','Macro','Set global signals','var(--y)'],['2','Universe','Define stock lists','var(--b)'],['3','Mapping','Wire drivers to models','var(--p)'],['4','Scoring','Rate stock sensitivity','var(--g)'],['5','Engine','7-scenario probabilities','#6366f1'],['6','Conviction','Verdicts & tiers','#22d3ee'],['7','Export','Output to XA-Coach','var(--fg3)']].map(([n,title,desc,c])=>
-        <div key={n} style={{padding:12,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6,textAlign:'center',cursor:n==='1'?'pointer':n==='7'?'pointer':'default'}} onClick={()=>{if(n==='1')onSelect({type:'macro'});if(n==='7')onSelect({type:'export'})}}>
-          <div style={{width:24,height:24,borderRadius:'50%',background:c+'15',border:`1px solid ${c}40`,color:c,fontSize:11,fontWeight:700,fontFamily:'var(--mono)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 6px'}}>{n}</div>
-          <div style={{fontSize:11,fontWeight:600,color:'var(--fg2)',fontFamily:'var(--mono)',marginBottom:2}}>{title}</div>
-          <div style={{fontSize:9,color:'var(--fg4)'}}>{desc}</div>
-        </div>
-      )}
-    </div>
-    <Label>Teams</Label>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12}}>
-      {teams.map(team=>{const tm=models.filter(m=>m.teamId===team.id);const ts=tm.reduce((a,m)=>a+(m.stocks||[]).length,0);const tl=tm.reduce((a,m)=>a+(m.stocks||[]).filter(s=>s.verdict==='long').length,0);
-        return<div key={team.id} onClick={()=>onSelect({type:'team',id:team.id})} style={{padding:18,background:'var(--bg2)',border:`1px solid ${team.color}20`,borderRadius:8,cursor:'pointer',transition:'all .15s'}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}><span style={{fontSize:18}}>{team.icon}</span><span style={{fontSize:15,fontWeight:600,color:team.color}}>{team.name}</span></div>
-          <div style={{display:'flex',gap:16,fontSize:11,fontFamily:'var(--mono)'}}><span style={{color:'var(--fg3)'}}>{ts} names</span><span style={{color:'var(--g)'}}>{tl}L</span><span style={{color:'var(--r)'}}>{ts-tl}S</span></div>
-          <div style={{marginTop:10,display:'flex',flexWrap:'wrap',gap:4}}>{tm.map(m=><Badge key={m.id} color={team.color} small>{m.name}</Badge>)}</div>
-        </div>})}
-    </div>
-  </div>;
-}
+/* ═══════════════ MACRO DASHBOARD (Grouped by Operator) ═══════════════ */
+function MacroView({operators, globalDrivers, setGlobalDrivers}) {
+  const [collapsed, setCollapsed] = useState({});
+  const toggle = id => setCollapsed(p => ({...p, [id]: !p[id]}));
 
-/* ═══════════════ VIEW: STAGE 1 — MACRO ENVIRONMENT ═══════════════ */
-function MacroView({globalDrivers,setGlobalDrivers}){
-  const updateDriver=(id,field,val)=>setGlobalDrivers(p=>p.map(d=>d.id===id?{...d,[field]:val}:d));
-  const addDriver=()=>{const label=prompt('Driver name:');if(!label)return;
-    setGlobalDrivers(p=>[...p,{id:`d${Date.now()}`,label,description:'',signal:0,category:'macro'}])};
-  const removeDriver=id=>{if(confirm('Remove this global driver?'))setGlobalDrivers(p=>p.filter(d=>d.id!==id))};
-  const cats=[...new Set(globalDrivers.map(d=>d.category||'macro'))];
-  const catColors={macro:'var(--y)',sector:'var(--b)',geo:'var(--r)'};
-
-  return<div style={{padding:28,animation:'fadeIn .3s ease',maxWidth:900}}>
-    <StageBadge n="1" label="Macro Environment"/>
-    <h1 style={{fontSize:24,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400,marginBottom:4}}>Global Macro Signals</h1>
-    <p style={{fontSize:12,color:'var(--fg4)',marginBottom:24}}>Set the current state of the world. Signals flow through to models via their driver mappings.</p>
-
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-      <div style={{display:'flex',gap:6}}>{cats.map(c=><Badge key={c} color={catColors[c]||'var(--fg3)'} small>{c} ({globalDrivers.filter(d=>d.category===c).length})</Badge>)}</div>
-      <Btn onClick={addDriver} active color="var(--g)" style={{fontSize:10}}>+ Add Driver</Btn>
-    </div>
-
-    <div style={{display:'flex',flexDirection:'column',gap:8}}>
-      {globalDrivers.map(d=>{
-        const sc=d.signal>0.3?'var(--g)':d.signal<-0.3?'var(--r)':'var(--fg3)';
-        const sl=d.signal>0.5?'STRONG BULL':d.signal>0.2?'BULLISH':d.signal>-0.2?'NEUTRAL':d.signal>-0.5?'BEARISH':'STRONG BEAR';
-        return<div key={d.id} style={{padding:'14px 16px',borderRadius:8,background:'var(--bg2)',border:`1px solid var(--border2)`,display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'center'}}>
-          <div>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:2}}>
-              <input value={d.label} onChange={e=>updateDriver(d.id,'label',e.target.value)} style={{fontSize:13,fontWeight:600,fontFamily:'var(--mono)',background:'transparent',border:'none',color:'var(--fg)',width:'100%'}}/>
-            </div>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <Badge color={catColors[d.category]||'var(--fg3)'} small>{d.category}</Badge>
-              <select value={d.category||'macro'} onChange={e=>updateDriver(d.id,'category',e.target.value)} style={{fontSize:9,fontFamily:'var(--mono)',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:3,padding:'1px 4px',color:'var(--fg4)',cursor:'pointer'}}>
-                <option value="macro">macro</option><option value="sector">sector</option><option value="geo">geo</option>
-              </select>
-            </div>
-            <input value={d.description||''} onChange={e=>updateDriver(d.id,'description',e.target.value)} placeholder="Description..." style={{width:'100%',padding:'2px 0',fontSize:11,color:'var(--fg4)',background:'transparent',border:'none',marginTop:4}}/>
-          </div>
-          <div>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--r)',width:24,textAlign:'right'}}>-1</span>
-              <input type="range" min="-100" max="100" value={Math.round(d.signal*100)} onChange={e=>updateDriver(d.id,'signal',parseInt(e.target.value)/100)} style={{flex:1,accentColor:sc}}/>
-              <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--g)',width:24}}>+1</span>
-            </div>
-            <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
-              <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>{d.signal>0?'+':''}{d.signal.toFixed(2)}</span>
-              <span style={{fontSize:9,fontFamily:'var(--mono)',color:sc,fontWeight:600}}>{sl}</span>
-            </div>
-          </div>
-          <button onClick={()=>removeDriver(d.id)} style={{width:24,height:24,borderRadius:4,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
-        </div>})}
-    </div>
-  </div>;
-}
-
-/* ═══════════════ VIEW: TEAM ═══════════════ */
-function TeamView({team,models:all,globalDrivers,onSelect}){
-  const tm=all.filter(m=>m.teamId===team.id);
-  return<div style={{padding:28,animation:'fadeIn .3s ease'}}>
-    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
-      <span style={{fontSize:28}}>{team.icon}</span>
-      <div><h1 style={{fontSize:24,fontFamily:'var(--serif)',color:team.color,fontWeight:400}}>{team.name}</h1>
-        <p style={{fontSize:12,color:'var(--fg3)',fontFamily:'var(--mono)'}}>{tm.length} model{tm.length!==1?'s':''}</p></div>
-    </div>
-    {tm.length===0&&<div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontFamily:'var(--mono)'}}>No models in this team yet.</div>}
-    {tm.map(m=>{const stocks=m.stocks||[];const longs=stocks.filter(s=>s.verdict==='long');
-      return<div key={m.id} style={{marginBottom:16,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
-        <div onClick={()=>onSelect({type:'model',id:m.id})} style={{padding:'14px 18px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <span style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)'}}>{m.name}</span>
-            <Badge color="var(--g)" small>{(m.driverMap||[]).length} drivers</Badge>
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:14,fontSize:12,fontFamily:'var(--mono)'}}>
-            <span style={{color:'var(--fg3)'}}>{stocks.length} names</span>
-            <span style={{color:'var(--g)',fontWeight:700}}>{longs.length}L</span>
-            <span style={{color:'var(--r)',fontWeight:700}}>{stocks.length-longs.length}S</span>
-            <span style={{color:'var(--fg4)',fontSize:16}}>→</span>
-          </div>
-        </div>
-      </div>})}
-  </div>;
-}
-
-/* ═══════════════ VIEW: MODEL (STAGES 2–6) ═══════════════ */
-function ModelView({model,setModels,teams,globalDrivers}){
-  const[tab,setTab]=useState('engine');
-  const[expanded,setExpanded]=useState(null);
-  const[sortBy,setSortBy]=useState('rr');
-  const[filterV,setFilterV]=useState('all');
-  const team=teams.find(t=>t.id===model.teamId);
-  const stocks=model.stocks||[];
-  const driverMap=model.driverMap||[];
-  const updateModel=fn=>setModels(p=>p.map(m=>m.id===model.id?fn(m):m));
-
-  const results=useMemo(()=>stocks.map(s=>({...s,eng:runEngine(s,driverMap,globalDrivers)})),[stocks,driverMap,globalDrivers]);
-
-  const sorted=useMemo(()=>{
-    let r=results;
-    if(filterV==='long')r=r.filter(s=>s.verdict==='long');
-    if(filterV==='short')r=r.filter(s=>s.verdict==='short');
-    return[...r].sort((a,b)=>{
-      if(!a.eng||!b.eng)return 0;
-      if(sortBy==='rr')return Math.abs(b.eng.rr)-Math.abs(a.eng.rr);
-      if(sortBy==='skew')return b.eng.skew-a.eng.skew;
-      if(sortBy==='ev')return(b.eng.ev/(b.currentPrice||1))-(a.eng.ev/(a.currentPrice||1));
-      return 0;
-    });
-  },[results,filterV,sortBy]);
-
-  const dmTotalW=driverMap.reduce((s,m)=>s+m.weight,0);
-  const longs=stocks.filter(s=>s.verdict==='long');
-  const avgLongRR=longs.length?longs.reduce((s,st)=>{const e=runEngine(st,driverMap,globalDrivers);return s+(e?e.rr:0)},0)/longs.length:0;
-  const shorts=stocks.filter(s=>s.verdict!=='long');
-  const avgShortRR=shorts.length?shorts.reduce((s,st)=>{const e=runEngine(st,driverMap,globalDrivers);return s+(e?e.rr:0)},0)/shorts.length:0;
-
-  const addDriverToMap=()=>{
-    const available=globalDrivers.filter(g=>!driverMap.find(m=>m.driverId===g.id));
-    if(!available.length)return alert('All global drivers already mapped');
-    const id=available[0].id;
-    updateModel(m=>({...m,driverMap:[...(m.driverMap||[]),{driverId:id,weight:10}]}));
+  const updateSignal = (driverId, val) => {
+    setGlobalDrivers(p => p.map(d => d.id === driverId ? {...d, signal: val} : d));
   };
-  const removeFromMap=did=>updateModel(m=>({...m,driverMap:(m.driverMap||[]).filter(x=>x.driverId!==did)}));
-  const updateMapWeight=(did,w)=>updateModel(m=>({...m,driverMap:(m.driverMap||[]).map(x=>x.driverId===did?{...x,weight:w}:x)}));
-  const updateMapDriver=(oldId,newId)=>updateModel(m=>({...m,driverMap:(m.driverMap||[]).map(x=>x.driverId===oldId?{...x,driverId:newId}:x)}));
 
-  return<div style={{animation:'fadeIn .3s ease',height:'100vh',display:'flex',flexDirection:'column'}}>
-    <div style={{padding:'14px 24px',borderBottom:'1px solid var(--border)',background:'var(--bg1)',flexShrink:0}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          {team&&<span style={{fontSize:16}}>{team.icon}</span>}
-          <span style={{fontSize:20,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)'}}>{model.name}</span>
-          <Badge color="var(--g)" small>{driverMap.length} drivers</Badge>
-          <Badge color={dmTotalW===100?'var(--g)':'var(--r)'} small>{dmTotalW}%{dmTotalW!==100?' ⚠':' ✓'}</Badge>
-        </div>
-        <div style={{display:'flex',alignItems:'center',gap:16,fontSize:12,fontFamily:'var(--mono)'}}>
-          <div style={{background:'var(--bg2)',padding:'4px 10px',borderRadius:4,border:'1px solid var(--border)'}}>
-            <span style={{fontSize:9,color:'var(--fg4)'}}>LONG R/R </span>
-            <span style={{color:'var(--g)',fontWeight:700}}>{avgLongRR>0?'+':''}{avgLongRR.toFixed(1)}%</span>
-          </div>
-          <div style={{background:'var(--bg2)',padding:'4px 10px',borderRadius:4,border:'1px solid var(--border)'}}>
-            <span style={{fontSize:9,color:'var(--fg4)'}}>SHORT R/R </span>
-            <span style={{color:'var(--r)',fontWeight:700}}>{avgShortRR.toFixed(1)}%</span>
-          </div>
-          <span style={{color:'var(--fg3)'}}>{stocks.length} names</span>
-        </div>
-      </div>
-      <div style={{display:'flex',gap:4,marginTop:10}}>
-        {[['engine','⑤⑥ Engine & Conviction'],['mapping','③ Driver Mapping'],['scoring','④ Sensitivity Scoring'],['universe','② Universe']].map(([id,label])=>
-          <Btn key={id} active={tab===id} color="var(--fg2)" onClick={()=>setTab(id)}>{label}</Btn>)}
-      </div>
+  const bullCount = globalDrivers.filter(d => d.signal > 0.3).length;
+  const bearCount = globalDrivers.filter(d => d.signal < -0.3).length;
+  const neutralCount = globalDrivers.length - bullCount - bearCount;
+
+  return <div style={{padding:32,maxWidth:1000,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:28}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400,marginBottom:6}}>Macro Dashboard</h1>
+      <p style={{fontSize:12,color:'var(--fg4)'}}>Adjust global signals. Changes flow through to all operator engines in real time.</p>
     </div>
 
-    <div style={{flex:1,overflowY:'auto'}}>
-
-    {tab==='engine'&&<div style={{padding:20}}>
-      <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
-        <div style={{display:'flex',gap:3}}>
-          {[['all','All'],['long','Longs'],['short','Shorts']].map(([v,l])=><Btn key={v} active={filterV===v} color="var(--fg2)" onClick={()=>setFilterV(v)}>{l}</Btn>)}
-        </div>
-        <div style={{width:1,height:16,background:'var(--border)'}}/>
-        <div style={{display:'flex',gap:3}}>
-          {[['rr','R/R'],['skew','Skew'],['ev','EV']].map(([v,l])=><Btn key={v} active={sortBy===v} color="var(--b)" onClick={()=>setSortBy(v)}>{l}</Btn>)}
-        </div>
-      </div>
-      <div style={{display:'flex',flexDirection:'column',gap:6}}>
-        {sorted.map(stock=>{
-          const r=stock.eng;if(!r)return null;
-          const mx=Math.max(...r.pr);
-          const isExp=expanded===stock.ticker;
-          return<div key={stock.ticker} style={{background:'var(--bg2)',borderRadius:8,border:'1px solid var(--border)',borderLeft:`3px solid ${VC[r.vd]||'var(--fg4)'}`,overflow:'hidden'}}>
-            <div onClick={()=>setExpanded(isExp?null:stock.ticker)} style={{padding:'12px 14px',cursor:'pointer',display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
-              <div style={{minWidth:120}}>
-                <div style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:700,color:'var(--fg)'}}>{stock.ticker}</div>
-                <div style={{fontSize:11,color:'var(--fg3)',marginTop:1}}>{stock.name}</div>
-                <div style={{fontSize:9,color:'var(--fg4)',marginTop:1}}>{stock.sector}</div>
-              </div>
-              <div style={{flex:1,minWidth:180}}>
-                <div style={{display:'flex',alignItems:'flex-end',gap:2,height:44,marginBottom:3}}>
-                  {r.pr.map((p,i)=><div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
-                    <span style={{fontSize:7,fontFamily:'var(--mono)',color:'var(--fg4)',marginBottom:1}}>{p.toFixed(0)}%</span>
-                    <div style={{width:'100%',height:`${(p/mx)*34}px`,background:`linear-gradient(180deg,${SCENARIOS[i].color}bb,${SCENARIOS[i].color}33)`,borderRadius:'2px 2px 0 0',border:`1px solid ${SCENARIOS[i].color}55`}}/>
-                  </div>)}
-                </div>
-                <div style={{display:'flex',gap:2}}>
-                  {stock.prices.map((s,i)=><div key={i} style={{flex:1,textAlign:'center',fontSize:7,fontFamily:'var(--mono)',color:SCENARIOS[i].color}}>{fmt(s,'price')}</div>)}
-                </div>
-              </div>
-              <div style={{minWidth:110,textAlign:'right'}}>
-                <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)'}}>Now: {fmt(stock.currentPrice,'price')}</div>
-                <div style={{fontSize:15,fontFamily:'var(--mono)',fontWeight:700,color:'#6366f1'}}>EV: {fmt(r.ev,'price')}</div>
-                <div style={{fontSize:12,fontFamily:'var(--mono)',color:r.rr>0?'var(--g)':'var(--r)',fontWeight:700}}>{r.rr>0?'+':''}{r.rr.toFixed(1)}%</div>
-              </div>
-              <div style={{minWidth:90,textAlign:'right'}}>
-                <div style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:700,color:VC[r.vd]}}>{r.vd}</div>
-                <div style={{fontFamily:'var(--mono)',fontSize:10,color:TC[r.tier],marginTop:2}}>{r.tier}</div>
-                <div style={{fontFamily:'var(--mono)',fontSize:10,color:r.skew>1?'var(--b)':'#f97316',marginTop:2}}>Skew {r.skew.toFixed(2)}</div>
-              </div>
-            </div>
-            {isExp&&<div style={{padding:'0 14px 14px',borderTop:'1px solid var(--bg3)'}}>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:6,marginTop:12}}>
-                {SCENARIOS.map((s,i)=><div key={s.id} style={{background:'var(--bg3)',borderRadius:6,padding:8,textAlign:'center',border:`1px solid ${s.color}22`}}>
-                  <div style={{fontSize:8,fontFamily:'var(--mono)',color:s.color,fontWeight:600,marginBottom:3}}>{s.label}</div>
-                  <div style={{fontSize:13,fontFamily:'var(--mono)',color:'var(--fg)',fontWeight:700}}>{fmt(stock.prices[i],'price')}</div>
-                  <div style={{fontSize:10,fontFamily:'var(--mono)',color:s.color,marginTop:2}}>{r.pr[i].toFixed(1)}%</div>
-                  <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:2}}>{(((stock.prices[i]-stock.currentPrice)/stock.currentPrice)*100).toFixed(0)}%</div>
-                </div>)}
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:12}}>
-                <div style={{background:'var(--bg3)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
-                  <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:1,marginBottom:6}}>RISK</div>
-                  {[['Max Drawdown',`${r.mdd.toFixed(0)}%`,'var(--r)'],['Max Upside',`+${r.mxu.toFixed(0)}%`,'var(--g)'],['Skew Ratio',r.skew.toFixed(2),r.skew>1?'var(--b)':'#f97316'],['Horizon','60-90d','var(--fg4)']].map(([k,va,co])=>
-                    <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'var(--mono)',padding:'2px 0'}}><span style={{color:'var(--fg4)'}}>{k}</span><span style={{color:co,fontWeight:600}}>{va}</span></div>)}
-                </div>
-                <div style={{background:'var(--bg3)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
-                  <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',letterSpacing:1,marginBottom:6}}>SENSITIVITY</div>
-                  {driverMap.map(m=>{const gd=globalDrivers.find(g=>g.id===m.driverId);const sens=stock.sens?.[m.driverId]||0;
-                    return<div key={m.driverId} style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'var(--mono)',padding:'2px 0'}}>
-                      <span style={{color:'var(--fg4)'}}>{gd?.label?.split(' ').slice(0,2).join(' ')||m.driverId} ({m.weight}%)</span>
-                      <span style={{color:sens>0?'var(--g)':sens<0?'var(--r)':'var(--fg4)',fontWeight:600}}>{sens>0?'+':''}{sens.toFixed(1)}</span>
-                    </div>})}
-                </div>
-              </div>
-              {stock.thesis&&<div style={{marginTop:10,padding:10,background:'var(--bg3)',borderRadius:6,fontSize:11,color:'var(--fg3)',lineHeight:1.8,border:'1px solid var(--border)'}}>{stock.thesis}</div>}
-            </div>}
-          </div>})}
-      </div>
-    </div>}
-
-    {tab==='mapping'&&<div style={{padding:24,maxWidth:700}}>
-      <StageBadge n="3" label="Driver Mapping"/>
-      <h2 style={{fontSize:18,fontFamily:'var(--serif)',color:'var(--p)',fontWeight:400,marginBottom:4}}>Which global drivers does {model.name} listen to?</h2>
-      <p style={{fontSize:12,color:'var(--fg4)',marginBottom:20}}>Map global macro signals to this model with weights (must sum to 100%).</p>
-
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-        <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:dmTotalW===100?'var(--g)':'var(--r)'}}>{dmTotalW}% {dmTotalW!==100?'⚠ must = 100%':'✓'}</span>
-        <Btn onClick={addDriverToMap} active color="var(--g)" style={{fontSize:10}}>+ Map Driver</Btn>
-      </div>
-
-      <div style={{display:'flex',flexDirection:'column',gap:8}}>
-        {driverMap.map(m=>{const gd=globalDrivers.find(g=>g.id===m.driverId);
-          return<div key={m.driverId} style={{padding:'12px 14px',borderRadius:6,background:'var(--bg2)',border:'1px solid var(--border2)',display:'flex',alignItems:'center',gap:12}}>
-            <select value={m.driverId} onChange={e=>updateMapDriver(m.driverId,e.target.value)} style={{fontSize:11,fontFamily:'var(--mono)',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:4,padding:'4px 6px',color:'var(--fg)',cursor:'pointer',flex:1}}>
-              {globalDrivers.map(g=><option key={g.id} value={g.id}>{g.label}</option>)}
-            </select>
-            <div style={{display:'flex',alignItems:'center',gap:6,flex:1}}>
-              <input type="range" min="0" max="50" value={m.weight} onChange={e=>updateMapWeight(m.driverId,+e.target.value)} style={{flex:1,accentColor:'var(--p)'}}/>
-              <span style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:700,color:'var(--p)',width:34,textAlign:'right'}}>{m.weight}%</span>
-            </div>
-            <div style={{fontSize:10,fontFamily:'var(--mono)',color:gd?.signal>0?'var(--g)':gd?.signal<0?'var(--r)':'var(--fg4)',width:40,textAlign:'right'}}>
-              {gd?.signal>0?'+':''}{gd?.signal?.toFixed(1)||'0'}
-            </div>
-            <button onClick={()=>removeFromMap(m.driverId)} style={{width:22,height:22,borderRadius:3,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
-          </div>})}
-      </div>
-
-      <div style={{marginTop:16,padding:12,borderRadius:6,background:'var(--bg2)',border:'1px solid var(--border)'}}>
-        <div style={{display:'flex',height:18,borderRadius:4,overflow:'hidden',gap:2}}>
-          {driverMap.map((m,i,arr)=>{const gd=globalDrivers.find(g=>g.id===m.driverId);
-            return<div key={m.driverId} title={`${gd?.label||m.driverId}: ${m.weight}%`} style={{flex:m.weight,background:'var(--p)',opacity:.3+(m.weight/60),transition:'flex .4s ease',borderRadius:i===0?'4px 0 0 4px':i===arr.length-1?'0 4px 4px 0':0}}/>})}
-        </div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:6}}>
-          {driverMap.map(m=>{const gd=globalDrivers.find(g=>g.id===m.driverId);
-            return<span key={m.driverId} style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{gd?.label?.split(' ').slice(0,2).join(' ')||m.driverId} {m.weight}%</span>})}
-        </div>
-      </div>
-    </div>}
-
-    {tab==='scoring'&&<div style={{padding:24}}>
-      <StageBadge n="4" label="Sensitivity Scoring"/>
-      <h2 style={{fontSize:18,fontFamily:'var(--serif)',color:'var(--g)',fontWeight:400,marginBottom:4}}>Stock Sensitivity to Mapped Drivers</h2>
-      <p style={{fontSize:12,color:'var(--fg4)',marginBottom:20}}>How does each stock respond to each driver? -1 (hurts) to +1 (helps). These interact with global signals in the engine.</p>
-
-      <div style={{borderRadius:6,overflow:'auto',border:'1px solid var(--border)'}}>
-        <table style={{width:'100%',borderCollapse:'collapse'}}>
-          <thead><tr style={{background:'var(--bg3)'}}>
-            <th style={{padding:'8px 10px',textAlign:'left',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600,position:'sticky',left:0,background:'var(--bg3)',zIndex:1}}>Ticker</th>
-            <th style={{padding:'8px 10px',textAlign:'center',fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600}}>Call</th>
-            {driverMap.map(m=>{const gd=globalDrivers.find(g=>g.id===m.driverId);
-              return<th key={m.driverId} style={{padding:'8px 10px',textAlign:'center',fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',fontWeight:600,minWidth:80}}>{gd?.label?.split(' ').slice(0,2).join(' ')||m.driverId}<br/><span style={{color:'var(--p)'}}>{m.weight}%</span></th>})}
-          </tr></thead>
-          <tbody>{stocks.map(s=><tr key={s.ticker} style={{borderBottom:'1px solid var(--bg3)'}}>
-            <td style={{padding:'6px 10px',fontFamily:'var(--mono)',fontWeight:700,fontSize:11,color:'var(--fg)',position:'sticky',left:0,background:'var(--bg2)',zIndex:1}}>{s.ticker}</td>
-            <td style={{padding:'6px 10px',textAlign:'center'}}><Badge color={s.verdict==='long'?'var(--g)':'var(--r)'} small>{s.verdict==='long'?'▲':'▼'}</Badge></td>
-            {driverMap.map(m=>{const val=s.sens?.[m.driverId]||0;const c=val>0?'var(--g)':val<0?'var(--r)':'var(--fg4)';
-              return<td key={m.driverId} style={{padding:'4px 6px',textAlign:'center'}}>
-                <input type="range" min="-10" max="10" value={Math.round(val*10)} onChange={e=>{const nv=parseInt(e.target.value)/10;
-                  updateModel(md=>({...md,stocks:(md.stocks||[]).map(st=>st.ticker===s.ticker?{...st,sens:{...st.sens,[m.driverId]:nv}}:st)}))}}
-                  style={{width:60,accentColor:c}}/>
-                <div style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{val>0?'+':''}{val.toFixed(1)}</div>
-              </td>})}
-          </tr>)}</tbody>
-        </table>
-      </div>
-    </div>}
-
-    {tab==='universe'&&<div style={{padding:24,maxWidth:700}}>
-      <StageBadge n="2" label="Universe Definition"/>
-      <h2 style={{fontSize:18,fontFamily:'var(--serif)',color:'var(--b)',fontWeight:400,marginBottom:4}}>Stock Universe</h2>
-      <p style={{fontSize:12,color:'var(--fg4)',marginBottom:20}}>{stocks.length} names. Add tickers, set verdict and price targets.</p>
-
-      <div style={{marginBottom:16}}>
-        <input placeholder="+ Add ticker (press Enter)" onKeyDown={e=>{if(e.key==='Enter'&&e.target.value.trim()){
-          const t=e.target.value.toUpperCase().trim();
-          const defaultSens=Object.fromEntries(driverMap.map(m=>[m.driverId,0]));
-          updateModel(m=>({...m,stocks:[...(m.stocks||[]),{ticker:t,name:t,sector:'',verdict:'long',currentPrice:100,prices:[60,75,88,105,120,140,170],sens:defaultSens,thesis:'',metrics:{}}]}));
-          e.target.value=''}}} style={{width:'100%',padding:'10px 14px',fontSize:12,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--g)30',borderRadius:6,color:'var(--g)'}}/>
-      </div>
-
-      {stocks.map(s=><div key={s.ticker} style={{padding:'10px 14px',marginBottom:6,borderRadius:6,background:'var(--bg2)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:10}}>
-        <span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:12,color:'var(--fg)',width:80}}>{s.ticker}</span>
-        <input value={s.name} onChange={e=>updateModel(m=>({...m,stocks:(m.stocks||[]).map(st=>st.ticker===s.ticker?{...st,name:e.target.value}:st)}))} style={{flex:1,padding:'4px 8px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:3,color:'var(--fg2)'}}/>
-        <select value={s.verdict} onChange={e=>updateModel(m=>({...m,stocks:(m.stocks||[]).map(st=>st.ticker===s.ticker?{...st,verdict:e.target.value}:st)}))} style={{padding:'4px 6px',fontSize:10,fontFamily:'var(--mono)',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:3,color:s.verdict==='long'?'var(--g)':'var(--r)',cursor:'pointer'}}>
-          <option value="long">▲ LONG</option><option value="short">▼ SHORT</option>
-        </select>
-        <span style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)'}}>Now:</span>
-        <input type="number" value={s.currentPrice} onChange={e=>updateModel(m=>({...m,stocks:(m.stocks||[]).map(st=>st.ticker===s.ticker?{...st,currentPrice:parseFloat(e.target.value)||0}:st)}))} style={{width:60,padding:'4px 6px',fontSize:10,fontFamily:'var(--mono)',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:3,color:'var(--fg2)',textAlign:'right'}}/>
-        <button onClick={()=>updateModel(m=>({...m,stocks:(m.stocks||[]).filter(st=>st.ticker!==s.ticker)}))} style={{width:22,height:22,borderRadius:3,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)',fontSize:12,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
-      </div>)}
-    </div>}
-
+    <div style={{display:'flex',gap:12,marginBottom:24}}>
+      <Badge color="var(--g)">{bullCount} Bull</Badge>
+      <Badge color="var(--fg3)">{neutralCount} Neutral</Badge>
+      <Badge color="var(--r)">{bearCount} Bear</Badge>
+      <span style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)',marginLeft:'auto'}}>{globalDrivers.length} drivers across {operators.length} operators</span>
     </div>
+
+    {operators.map(op => {
+      const isCollapsed = collapsed[op.id];
+      const opDrivers = globalDrivers.filter(gd => op.drivers.some(od => od.id === gd.id));
+      const avgSig = opDrivers.length ? opDrivers.reduce((a,d) => a + d.signal, 0) / opDrivers.length : 0;
+      const avgColor = avgSig > 0.2 ? 'var(--g)' : avgSig < -0.2 ? 'var(--r)' : 'var(--fg3)';
+
+      return <div key={op.id} style={{marginBottom:12,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden'}}>
+        <div onClick={() => toggle(op.id)} style={{padding:'14px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:isCollapsed?'none':'1px solid var(--border)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:16}}>{op.icon}</span>
+            <span style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+            <span style={{fontSize:11,color:'var(--fg4)'}}>{op.team}</span>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:600,color:avgColor}}>avg: {avgSig>0?'+':''}{avgSig.toFixed(2)}</span>
+            <Badge color={op.color} small>{opDrivers.length} drivers</Badge>
+            <span style={{fontSize:14,color:'var(--fg4)',transition:'transform .2s',transform:isCollapsed?'rotate(-90deg)':'rotate(0)'}}>{isCollapsed ? '▸' : '▾'}</span>
+          </div>
+        </div>
+        {!isCollapsed && <div style={{padding:'8px 20px 16px'}}>
+          {opDrivers.map(d => {
+            const sc = d.signal > 0.3 ? 'var(--g)' : d.signal < -0.3 ? 'var(--r)' : 'var(--fg3)';
+            const sl = d.signal > 0.5 ? 'STRONG BULL' : d.signal > 0.2 ? 'BULLISH' : d.signal > -0.2 ? 'NEUTRAL' : d.signal > -0.5 ? 'BEARISH' : 'STRONG BEAR';
+            return <div key={d.id} style={{padding:'10px 0',borderBottom:'1px solid var(--border)',display:'grid',gridTemplateColumns:'200px 1fr 100px',gap:16,alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{d.label}</div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--r)',width:16,textAlign:'right'}}>-1</span>
+                <input type="range" min="-100" max="100" value={Math.round(d.signal*100)} onChange={e => updateSignal(d.id, parseInt(e.target.value)/100)} style={{flex:1,accentColor:sc}}/>
+                <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--g)',width:16}}>+1</span>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <span style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>{d.signal>0?'+':''}{d.signal.toFixed(2)}</span>
+                <div style={{fontSize:8,fontFamily:'var(--mono)',color:sc,marginTop:1}}>{sl}</div>
+              </div>
+            </div>;
+          })}
+        </div>}
+      </div>;
+    })}
   </div>;
 }
 
-/* ═══════════════ VIEW: STAGE 7 — EXPORT ═══════════════ */
-function ExportView({teams,models,globalDrivers}){
-  const[scope,setScope]=useState('all');const[selModel,setSelModel]=useState(models[0]?.id||'');const[format,setFormat]=useState('csv');
-  const doExport=()=>{
-    const date=new Date().toISOString().slice(0,10);
-    const mods=scope==='all'?models:scope==='model'?models.filter(m=>m.id===selModel):models;
-    if(format==='json'){
-      download(JSON.stringify({globalDrivers,models:mods,exported:date},null,2),`upside_${scope}_${date}.json`,'application/json');
-    }else{
-      const dids=[...new Set(mods.flatMap(m=>(m.driverMap||[]).map(d=>d.driverId)))];
-      const h=['ticker','name','sector','verdict','model','team','current_price','ev','rr_pct','skew','engine_verdict','engine_tier','thesis',...dids.map(d=>`sens_${d}`),...SCENARIOS.map(s=>`price_${s.label.replace(/\s/g,'_')}`)];
-      let csv=h.join(',')+'\n';
-      mods.forEach(m=>{(m.stocks||[]).forEach(s=>{
-        const eng=runEngine(s,m.driverMap||[],globalDrivers);
-        const esc=v=>v&&v.includes(',')?`"${v.replace(/"/g,"'")}"`:v||'';
-        csv+=[s.ticker,esc(s.name),s.sector,s.verdict,m.name,m.teamId,s.currentPrice,eng?.ev?.toFixed(2)||'',eng?.rr?.toFixed(1)||'',eng?.skew?.toFixed(2)||'',eng?.vd||'',eng?.tier||'',esc(s.thesis),...dids.map(d=>s.sens?.[d]?.toFixed(1)||'0'),...(s.prices||[]).map(p=>p)].join(',')+'\n';
-      })});
-      download(csv,`upside_${scope}_${date}.csv`);
+/* ═══════════════ OPERATORS VIEW ═══════════════ */
+function OperatorsView({operators, globalDrivers}) {
+  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
+
+  return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:28}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--p)',fontWeight:400,marginBottom:6}}>GRS Operators</h1>
+      <p style={{fontSize:12,color:'var(--fg4)'}}>Click any operator to open its full interactive engine with scenario sliders, stock cards, and positioning data.</p>
+    </div>
+
+    {allStats.map(op => {
+      const s = op.stats;
+      const topLongs = s.results.filter(r => r.verdict==='long').sort((a,b) => (b.eng?.rr||0)-(a.eng?.rr||0)).slice(0,3);
+      const topShorts = s.results.filter(r => r.verdict==='short').sort((a,b) => (a.eng?.rr||0)-(b.eng?.rr||0)).slice(0,3);
+
+      return <div key={op.id} style={{marginBottom:20,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden'}}>
+        <div style={{padding:'18px 24px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            <span style={{fontSize:24}}>{op.icon}</span>
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+                <span style={{fontSize:12,color:'var(--fg3)'}}>{op.team}</span>
+              </div>
+              <div style={{fontSize:11,color:'var(--fg4)',marginTop:2}}>{op.desc}</div>
+            </div>
+          </div>
+          <a href={op.file} target="_blank" rel="noopener" style={{padding:'8px 16px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,textDecoration:'none'}}>
+            Open Engine →
+          </a>
+        </div>
+
+        <div style={{padding:'14px 24px',display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12}}>
+          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
+          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Long R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--g)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
+          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Short R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--r)'}}>{fmt(s.avgShortRR,'pct')}</div></div>
+          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
+          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Drivers</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--y)'}}>{op.drivers.length}</div></div>
+          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Regime</div><div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:s.regime.includes('BULL')?'var(--g)':s.regime.includes('BEAR')?'var(--r)':'var(--fg3)'}}>{s.regime}</div></div>
+        </div>
+
+        <div style={{padding:'0 24px 16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <div>
+            <div style={{fontSize:8,color:'var(--g)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Longs by R/R</div>
+            {topLongs.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
+              <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
+              <span style={{color:'var(--fg3)'}}>{s.name}</span>
+              <span style={{color:'var(--g)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
+            </div>)}
+          </div>
+          <div>
+            <div style={{fontSize:8,color:'var(--r)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Shorts by R/R</div>
+            {topShorts.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
+              <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
+              <span style={{color:'var(--fg3)'}}>{s.name}</span>
+              <span style={{color:'var(--r)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
+            </div>)}
+          </div>
+        </div>
+      </div>;
+    })}
+  </div>;
+}
+
+/* ═══════════════ EXPORT ═══════════════ */
+function ExportView({operators, globalDrivers}) {
+  const [scope, setScope] = useState('all');
+  const [selOp, setSelOp] = useState(operators[0]?.id||'');
+  const [format, setFormat] = useState('csv');
+
+  const doExport = () => {
+    const date = new Date().toISOString().slice(0,10);
+    const ops = scope === 'all' ? operators : operators.filter(o => o.id === selOp);
+    if (format === 'json') {
+      download(JSON.stringify({operators: ops.map(o => ({...o, stats: computeOpStats(o, globalDrivers)})), exported: date}, null, 2), `xa_${scope}_${date}.json`, 'application/json');
+    } else {
+      const h = ['ticker','name','verdict','operator','team','current_price','ev','rr_pct','skew','engine_verdict','tier',...SCENARIOS.map(s=>`price_${s.label.replace(/\s/g,'_')}`)];
+      let csv = h.join(',') + '\n';
+      ops.forEach(op => {
+        op.stocks.forEach(s => {
+          const eng = runEngine(s, op.driverMap, globalDrivers);
+          csv += [s.ticker, s.name, s.verdict, op.name, op.team, s.currentPrice, eng?.ev?.toFixed(2)||'', eng?.rr?.toFixed(1)||'', eng?.skew?.toFixed(2)||'', eng?.vd||'', eng?.tier||'', ...(s.prices||[]).map(p=>p)].join(',') + '\n';
+        });
+      });
+      download(csv, `xa_${scope}_${date}.csv`);
     }
   };
-  const totalS=models.reduce((a,m)=>a+(m.stocks||[]).length,0);
-  return<div style={{padding:28,maxWidth:600,animation:'fadeIn .3s ease'}}>
-    <StageBadge n="7" label="Export"/>
-    <h1 style={{fontSize:24,fontFamily:'var(--serif)',color:'var(--b)',fontWeight:400,marginBottom:4}}>Export Centre</h1>
-    <p style={{fontSize:12,color:'var(--fg4)',marginBottom:24}}>Export with full engine output for XA-Coach or backup</p>
-    <Label>Scope</Label>
+
+  const totalS = operators.reduce((a,o) => a + o.stocks.length, 0);
+
+  return <div style={{padding:32,maxWidth:600,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--b)',fontWeight:400,marginBottom:6}}>Export Centre</h1>
+    <p style={{fontSize:12,color:'var(--fg4)',marginBottom:28}}>Export with full engine output for XA-Coach or backup</p>
+
+    <div style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Scope</div>
     <div style={{display:'flex',gap:6,marginBottom:20}}>
-      {[['all',`All Models (${totalS})`],['model','Single Model']].map(([v,l])=>
-        <Btn key={v} active={scope===v} color="var(--b)" onClick={()=>setScope(v)} style={{flex:1}}>{l}</Btn>)}
+      {[['all',`All Operators (${totalS})`],['single','Single Operator']].map(([v,l]) =>
+        <Btn key={v} active={scope===v} color="var(--b)" onClick={() => setScope(v)} style={{flex:1}}>{l}</Btn>)}
     </div>
-    {scope==='model'&&<div style={{marginBottom:20}}><Label>Select Model</Label>
-      <select value={selModel} onChange={e=>setSelModel(e.target.value)} style={{width:'100%',padding:'8px 12px',fontSize:12,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
-        {models.map(m=><option key={m.id} value={m.id}>{m.name} ({(m.stocks||[]).length})</option>)}
-      </select></div>}
-    <Label>Format</Label>
+    {scope==='single' && <div style={{marginBottom:20}}>
+      <select value={selOp} onChange={e => setSelOp(e.target.value)} style={{width:'100%',padding:'8px 12px',fontSize:12,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
+        {operators.map(o => <option key={o.id} value={o.id}>{o.name} — {o.team} ({o.stocks.length})</option>)}
+      </select>
+    </div>}
+
+    <div style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Format</div>
     <div style={{display:'flex',gap:6,marginBottom:24}}>
-      <Btn active={format==='csv'} color="var(--g)" onClick={()=>setFormat('csv')} style={{flex:1}}>CSV (XA-Coach)</Btn>
-      <Btn active={format==='json'} color="var(--p)" onClick={()=>setFormat('json')} style={{flex:1}}>JSON (Full Backup)</Btn>
+      <Btn active={format==='csv'} color="var(--g)" onClick={() => setFormat('csv')} style={{flex:1}}>CSV (XA-Coach)</Btn>
+      <Btn active={format==='json'} color="var(--p)" onClick={() => setFormat('json')} style={{flex:1}}>JSON (Full Backup)</Btn>
     </div>
     <button onClick={doExport} style={{width:'100%',padding:'14px',fontSize:14,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:'pointer',border:'none',background:'var(--b)',color:'#000',transition:'all .2s'}}>↓ Export</button>
   </div>;
 }
 
 /* ═══════════════ MAIN APP ═══════════════ */
-function App(){
-  const[teams,setTeams]=useState(()=>LS.get('xa_teams')||DEFAULT_TEAMS);
-  const[models,setModels]=useState(()=>LS.get('xa_models')||DEFAULT_MODELS);
-  const[globalDrivers,setGlobalDrivers]=useState(()=>LS.get('xa_drivers')||DEFAULT_GLOBAL_DRIVERS);
-  const[selected,setSelected]=useState({type:'overview'});
+function App() {
+  const [view, setView] = useState('overview');
 
-  useEffect(()=>{LS.set('xa_teams',teams)},[teams]);
-  useEffect(()=>{LS.set('xa_models',models)},[models]);
-  useEffect(()=>{LS.set('xa_drivers',globalDrivers)},[globalDrivers]);
+  // Build flat global drivers from all operators
+  const defaultDrivers = OPERATORS.flatMap(op => op.drivers.map(d => ({...d, opId: op.id})));
+  const [globalDrivers, setGlobalDrivers] = useState(() => LS.get('xa_drivers_v2') || defaultDrivers);
 
-  const newModel=()=>{const name=prompt('Model name:');if(!name)return;
-    const id=name.toLowerCase().replace(/\s+/g,'-')+'-'+Date.now();
-    const teamId=prompt('Team (travel/defence/tech):',teams[0]?.id||'travel')||teams[0]?.id;
-    setModels(p=>[...p,{id,name,teamId,type:'internal',description:'',created:new Date().toISOString().slice(0,10),driverMap:[],stocks:[]}]);
-    setSelected({type:'model',id})};
+  useEffect(() => { LS.set('xa_drivers_v2', globalDrivers); }, [globalDrivers]);
 
-  const newTeam=()=>{const name=prompt('Team name:');if(!name)return;
-    const icons=['📊','🎯','💎','🔬','⚡','🌐','🏦','📈'];const colors=['#00e676','#40c4ff','#b388ff','#ff9800','#e91e63','#00bcd4','#8bc34a','#ffc107'];
-    setTeams(p=>[...p,{id:name.toLowerCase().replace(/\s+/g,'-'),name,color:colors[teams.length%colors.length],icon:icons[teams.length%icons.length]}])};
-
-  const handleReset=()=>{if(confirm('Reset all XA data to defaults? This cannot be undone.')){
-    ['xa_teams','xa_models','xa_drivers'].forEach(k=>localStorage.removeItem(k));
-    setTeams(DEFAULT_TEAMS);setModels(DEFAULT_MODELS);setGlobalDrivers(DEFAULT_GLOBAL_DRIVERS);setSelected({type:'overview'})}};
+  const handleReset = () => {
+    if (confirm('Reset all macro signals to defaults?')) {
+      localStorage.removeItem('xa_drivers_v2');
+      setGlobalDrivers(defaultDrivers);
+    }
+  };
 
   let content;
-  if(selected.type==='overview')content=<OverviewView teams={teams} models={models} globalDrivers={globalDrivers} onSelect={setSelected}/>;
-  else if(selected.type==='macro')content=<MacroView globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
-  else if(selected.type==='export')content=<ExportView teams={teams} models={models} globalDrivers={globalDrivers}/>;
-  else if(selected.type==='team'){const team=teams.find(t=>t.id===selected.id);content=team?<TeamView team={team} models={models} globalDrivers={globalDrivers} onSelect={setSelected}/>:null}
-  else if(selected.type==='model'){const model=models.find(m=>m.id===selected.id);content=model?<ModelView model={model} setModels={setModels} teams={teams} globalDrivers={globalDrivers}/>:null}
+  if (view === 'overview') content = <OverviewView operators={OPERATORS} globalDrivers={globalDrivers}/>;
+  else if (view === 'macro') content = <MacroView operators={OPERATORS} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
+  else if (view === 'operators') content = <OperatorsView operators={OPERATORS} globalDrivers={globalDrivers}/>;
+  else if (view === 'export') content = <ExportView operators={OPERATORS} globalDrivers={globalDrivers}/>;
 
-  return<div style={{display:'flex',height:'100vh'}}>
-    <Sidebar teams={teams} models={models} selected={selected} onSelect={setSelected} onNewModel={newModel} onNewTeam={newTeam}/>
+  return <div style={{display:'flex',flexDirection:'column',height:'100vh'}}>
+    <Header view={view} setView={setView}/>
     <div style={{flex:1,overflowY:'auto',position:'relative'}}>
       <div style={{position:'absolute',top:10,right:16,zIndex:10}}>
-        <button onClick={handleReset} title="Reset all data" style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg4)',cursor:'pointer',padding:'4px 8px',fontSize:9,fontFamily:'var(--mono)'}}>Reset</button>
+        <button onClick={handleReset} title="Reset signals" style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg4)',cursor:'pointer',padding:'4px 8px',fontSize:9,fontFamily:'var(--mono)'}}>Reset Signals</button>
       </div>
       {content}
+    </div>
+    <div style={{borderTop:'1px solid var(--border)',padding:'8px 28px',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--bg1)',flexShrink:0}}>
+      <span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>XA Command Centre v2.0 — GRS Price Target Engine</span>
+      <span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>upside-xa.com</span>
     </div>
   </div>;
 }

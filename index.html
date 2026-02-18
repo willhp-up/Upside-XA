@@ -1583,6 +1583,7 @@ function ExportView({operators, globalDrivers}) {
 /* ═══════════════ MAIN APP ═══════════════ */
 function App() {
   const [view, setView] = useState('overview');
+  const [renderKey, setRenderKey] = useState(0);
 
   // Build flat global drivers from all operators
   const defaultDrivers = OPERATORS.flatMap(op => op.drivers.map(d => ({...d, opId: op.id})));
@@ -1591,34 +1592,32 @@ function App() {
 
   useEffect(() => { LS.set('xa_drivers_v2', globalDrivers); }, [globalDrivers]);
 
-  /* Apply snap prices to operator stocks */
-  const liveOperators = useMemo(() => {
+  /* Wrap setSnapData to also bump renderKey — guarantees all children re-render */
+  const updateSnap = useCallback((newSnap) => {
+    setSnapData(newSnap);
+    setRenderKey(k => k + 1);
+  }, []);
+
+  /* Apply snap prices to operator stocks — computed every render, no memoization */
+  function buildLiveOperators() {
     if (!snapData?.priceMap) {
-      console.log('[XA liveOps] No priceMap — using hardcoded prices');
       return OPERATORS;
     }
     const pm = snapData.priceMap;
-    const pmKeys = Object.keys(pm);
-    console.log(`[XA liveOps] priceMap has ${pmKeys.length} keys`);
-    console.log(`[XA liveOps] NAS.OL in priceMap? ${pm['NAS.OL'] !== undefined} → value: ${pm['NAS.OL']}`);
-    console.log(`[XA liveOps] IHG.L in priceMap? ${pm['IHG.L'] !== undefined} → value: ${pm['IHG.L']}`);
-    /* Show all priceMap keys that contain NAS */
-    const nasKeys = pmKeys.filter(k => k.toUpperCase().includes('NAS'));
-    console.log(`[XA liveOps] Keys containing NAS:`, nasKeys.map(k => `${k}=${pm[k]}`));
-
-    const result = OPERATORS.map(op => ({
+    return OPERATORS.map(op => ({
       ...op,
       stocks: op.stocks.map(s => {
         const snapPrice = pm[s.ticker];
-        const finalPrice = snapPrice != null ? snapPrice : s.currentPrice;
-        if (s.ticker === 'NAS.OL') {
-          console.log(`[XA liveOps] NAS.OL: hardcoded=${s.currentPrice}, snapPrice=${snapPrice}, final=${finalPrice}`);
-        }
-        return { ...s, currentPrice: finalPrice };
+        return { ...s, currentPrice: snapPrice != null ? snapPrice : s.currentPrice };
       })
     }));
-    return result;
-  }, [snapData]);
+  }
+  const liveOperators = buildLiveOperators();
+
+  /* Debug: log NAS.OL on every render */
+  const tigOp = liveOperators.find(o => o.id === 'tig');
+  const nasStock = tigOp?.stocks.find(s => s.ticker === 'NAS.OL');
+  console.log(`[XA render #${renderKey}] NAS.OL currentPrice=${nasStock?.currentPrice}, snapData has priceMap=${!!snapData?.priceMap}, pm[NAS.OL]=${snapData?.priceMap?.['NAS.OL']}`);
 
   const handleReset = () => {
     if (confirm('Reset all macro signals to defaults?')) {
@@ -1628,11 +1627,11 @@ function App() {
   };
 
   let content;
-  if (view === 'overview') content = <OverviewView operators={liveOperators} globalDrivers={globalDrivers}/>;
-  else if (view === 'macro') content = <MacroView operators={liveOperators} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
-  else if (view === 'operators') content = <OperatorsView operators={liveOperators} globalDrivers={globalDrivers}/>;
-  else if (view === 'data') content = <DataView operators={liveOperators} globalDrivers={globalDrivers} snapData={snapData} setSnapData={setSnapData}/>;
-  else if (view === 'export') content = <ExportView operators={liveOperators} globalDrivers={globalDrivers}/>;
+  if (view === 'overview') content = <OverviewView key={renderKey} operators={liveOperators} globalDrivers={globalDrivers}/>;
+  else if (view === 'macro') content = <MacroView key={renderKey} operators={liveOperators} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
+  else if (view === 'operators') content = <OperatorsView key={renderKey} operators={liveOperators} globalDrivers={globalDrivers}/>;
+  else if (view === 'data') content = <DataView key={renderKey} operators={liveOperators} globalDrivers={globalDrivers} snapData={snapData} setSnapData={updateSnap}/>;
+  else if (view === 'export') content = <ExportView key={renderKey} operators={liveOperators} globalDrivers={globalDrivers}/>;
 
   return <div style={{display:'flex',flexDirection:'column',height:'100vh'}}>
     <Header view={view} setView={setView}/>

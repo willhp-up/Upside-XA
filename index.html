@@ -1242,6 +1242,58 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           /* Save a slim version without the full universe */
           try { LS.set('xa_snap_v3', {...newSnap, universe: []}); } catch(e2) {}
         }
+
+        /* ═══ AUTO-PUBLISH api.json for XA-Coach ═══ */
+        try {
+          const apiOps = operators.map(op => {
+            const liveStocks = op.stocks.map(s => ({
+              ...s,
+              currentPrice: priceMap[s.ticker] != null ? priceMap[s.ticker] : s.currentPrice,
+            }));
+            const results = liveStocks.map(s => {
+              const eng = runEngine(s, op.driverMap, globalDrivers);
+              return {
+                ticker: s.ticker,
+                name: s.name,
+                side: s.verdict,
+                currentPrice: s.currentPrice,
+                prices: s.prices,
+                ev: eng?.ev ? +eng.ev.toFixed(2) : null,
+                rr_pct: eng?.rr ? +eng.rr.toFixed(2) : null,
+                skew: eng?.skew ? +eng.skew.toFixed(3) : null,
+                verdict: eng?.vd || null,
+                tier: eng?.tier || null,
+                probabilities: eng?.pr?.map(p => +p.toFixed(2)) || [],
+                sensitivity: s.sens || {},
+              };
+            });
+            const driverSignals = op.driverMap.map(m => {
+              const gd = globalDrivers.find(d => d.id === m.driverId);
+              return { id: m.driverId, label: gd?.label || m.driverId, weight: m.weight, signal: gd?.signal ?? 0 };
+            });
+            return {
+              id: op.id, name: op.name, team: op.team, color: op.color, desc: op.desc,
+              drivers: driverSignals,
+              stocks: results,
+            };
+          });
+
+          const apiPayload = {
+            version: '3.0',
+            generated: new Date().toISOString(),
+            snapDate: snapDate,
+            snapFile: file.name,
+            priceMatches: priceUpdates,
+            totalStocks: allOpStocks.length,
+            unmatchedCount: unmatched.length,
+            operators: apiOps,
+          };
+
+          download(JSON.stringify(apiPayload, null, 2), 'api.json', 'application/json');
+          console.log('[XA Data Hub] api.json downloaded for XA-Coach');
+        } catch(apiErr) {
+          console.warn('[XA Data Hub] api.json generation failed:', apiErr.message);
+        }
         setParsing(false);
       } catch(err) {
         setError('Parse error: ' + err.message);
@@ -1358,6 +1410,43 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           </div>;
         })}
       </div>
+    </div>}
+
+    {/* API Endpoint info */}
+    {snapData && <div style={{background:'var(--bg1)',border:'1px solid rgba(99,102,241,.2)',borderRadius:8,padding:16,marginBottom:24}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'#6366f1'}}>⚡ XA-Coach API</span>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>api.json auto-downloaded on snap upload</span>
+      </div>
+      <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)',marginBottom:6}}>
+        Endpoint: <span style={{color:'var(--b)',userSelect:'all'}}>https://willhp-up.github.io/Upside-XA/api.json</span>
+      </div>
+      <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>
+        Drop api.json into your local repo folder, then <code style={{color:'var(--fg3)'}}>git add api.json; git push</code> to publish.
+        XA-Coach fetches: <code style={{color:'var(--fg3)'}}>fetch('https://willhp-up.github.io/Upside-XA/api.json').then(r =&gt; r.json())</code>
+      </div>
+      <button onClick={() => {
+        /* Re-generate and download api.json from current state */
+        try {
+          const apiOps = operators.map(op => {
+            const results = op.stocks.map(s => {
+              const eng = runEngine(s, op.driverMap, globalDrivers);
+              return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:s.currentPrice,
+                prices:s.prices, ev:eng?.ev?+eng.ev.toFixed(2):null, rr_pct:eng?.rr?+eng.rr.toFixed(2):null,
+                skew:eng?.skew?+eng.skew.toFixed(3):null, verdict:eng?.vd||null, tier:eng?.tier||null,
+                probabilities:eng?.pr?.map(p=>+p.toFixed(2))||[], sensitivity:s.sens||{} };
+            });
+            const driverSignals = op.driverMap.map(m => {
+              const gd = globalDrivers.find(d => d.id === m.driverId);
+              return { id:m.driverId, label:gd?.label||m.driverId, weight:m.weight, signal:gd?.signal??0 };
+            });
+            return { id:op.id, name:op.name, team:op.team, stocks:results, drivers:driverSignals };
+          });
+          download(JSON.stringify({version:'3.0',generated:new Date().toISOString(),snapDate:snapData.date,operators:apiOps},null,2),'api.json','application/json');
+        } catch(e) { console.warn('api.json re-gen failed:', e); }
+      }} style={{marginTop:8,fontSize:10,fontFamily:'var(--mono)',padding:'4px 12px',borderRadius:4,cursor:'pointer',border:'1px solid rgba(99,102,241,.3)',background:'rgba(99,102,241,.08)',color:'#6366f1'}}>
+        ↓ Re-download api.json
+      </button>
     </div>}
 
     {/* Unmatched tickers — shows which operator stocks didn't get a price update */}

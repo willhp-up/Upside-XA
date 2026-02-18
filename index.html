@@ -817,14 +817,14 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
     reader.onload = (e) => {
       try {
         const wb = XLSX.read(e.target.result, {type:'array'});
-        /* Try Upload sheet first, fall back to first sheet */
-        const sheetName = wb.SheetNames.includes('Upload') ? 'Upload' : wb.SheetNames[0];
+        /* Try Upload, Universe, or first sheet */
+        const sheetName = ['Upload','Universe','MSCI World','MSCI China','Sheet1'].find(n => wb.SheetNames.includes(n)) || wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
 
-        /* Find header row: scan for row containing 'bbg_ticker' or 'ticker' */
+        /* Find header row: scan for row containing any known ticker column name */
         const allRows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
         let headerIdx = -1;
-        const HEADER_MARKERS = ['bbg_ticker','ticker','BBG_TICKER','Ticker','xa_ticker'];
+        const HEADER_MARKERS = ['bbg_ticker','ticker','BBG_TICKER','Ticker','xa_ticker','BBG Ticker','XA Ticker'];
         for (let i = 0; i < Math.min(allRows.length, 20); i++) {
           const row = allRows[i];
           if (Array.isArray(row) && row.some(c => HEADER_MARKERS.includes(String(c).trim()))) {
@@ -832,55 +832,92 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           }
         }
 
+        /* Column name normaliser: maps display headers to snake_case keys */
+        const COL_NORM = {
+          'bbg ticker':'bbg_ticker','bbg_ticker':'bbg_ticker','ticker':'bbg_ticker','xa ticker':'bbg_ticker','xa_ticker':'bbg_ticker',
+          'name':'name','security_name':'name',
+          'country':'country','country_iso':'country',
+          'gics sector':'gics_sector','gics_sector_name':'gics_sector','gics sector name':'gics_sector',
+          'gics industry':'gics_industry','gics_industry_group_name':'gics_industry','gics industry group name':'gics_industry','gics industry group':'gics_industry',
+          'ccy':'ccy','crncy':'ccy','currency':'ccy',
+          'mkt cap ($m)':'mkt_cap_m','mkt cap (m)':'mkt_cap_m','mkt_cap_m':'mkt_cap_m','cur_mkt_cap':'mkt_cap_m','mkt cap':'mkt_cap_m','market cap':'mkt_cap_m',
+          'price':'price','price (fri cob)':'price','px_last':'price','px last':'price','last price':'price',
+          'fwd p/e':'fwd_pe','fwd pe':'fwd_pe','fwd_pe':'fwd_pe','best_pe_ratio':'fwd_pe','best pe ratio':'fwd_pe',
+          'trail p/e':'trail_pe','trail pe':'trail_pe','trail_pe':'trail_pe','pe_ratio':'trail_pe','pe ratio':'trail_pe',
+          'fwd ev/ebitda':'fwd_ev_ebitda','fwd_ev_ebitda':'fwd_ev_ebitda','best_ev_to_ebitda':'fwd_ev_ebitda','fwd ev/eb':'fwd_ev_ebitda','ev/ebitda':'fwd_ev_ebitda',
+          'p/b':'pb','pb':'pb','px_to_book_ratio':'pb','price to book':'pb',
+          'ev/sales':'ev_sales','ev_sales':'ev_sales','best_ev_to_best_sales':'ev_sales',
+          'roe %':'roe_pct','roe_pct':'roe_pct','return_com_eqy':'roe_pct','roe':'roe_pct',
+          'op margin %':'op_margin_pct','op_margin_pct':'op_margin_pct','oper_margin':'op_margin_pct','operating margin':'op_margin_pct',
+          'net margin %':'net_margin_pct','net_margin_pct':'net_margin_pct','prof_margin':'net_margin_pct','net margin':'net_margin_pct',
+          'fcf/share':'fcf_per_sh','fcf_per_sh':'fcf_per_sh','cf_free_cash_flow_per_sh':'fcf_per_sh','fcf per share':'fcf_per_sh',
+          '52w chg %':'chg_52w_pct','chg_52w_pct':'chg_52w_pct','chg_pct_52wk':'chg_52w_pct','52 week change':'chg_52w_pct',
+          'eps rev 3m %':'eps_rev_3m_pct','eps_rev_3m_pct':'eps_rev_3m_pct','best_eps_3mo_pct_chg':'eps_rev_3m_pct','eps revision':'eps_rev_3m_pct',
+          'beta':'beta','eqy_beta':'beta',
+          'nd/ebitda':'nd_ebitda','nd_ebitda':'nd_ebitda','tot_debt_to_ebitda':'nd_ebitda','net debt/ebitda':'nd_ebitda',
+          'div yield %':'div_yield_pct','div_yield_pct':'div_yield_pct','eqy_dvd_yld_ind':'div_yield_pct','dividend yield':'div_yield_pct',
+        };
+        function normCol(h) { return COL_NORM[h.toLowerCase().trim()] || h.toLowerCase().trim().replace(/[\s\/()$%]+/g,'_').replace(/_+$/,''); }
+
         let raw;
         if (headerIdx >= 0) {
-          /* Re-parse using discovered header row */
-          const headers = allRows[headerIdx].map(h => String(h).trim());
+          const headers = allRows[headerIdx].map(h => normCol(String(h)));
           raw = allRows.slice(headerIdx + 1)
-            .filter(row => row.some(c => c !== ''))
+            .filter(row => row.some(c => c !== '' && c !== undefined && c !== null))
             .map(row => {
               const obj = {};
-              headers.forEach((h, ci) => { obj[h] = row[ci] !== undefined ? row[ci] : ''; });
+              headers.forEach((h, ci) => { if (h) obj[h] = row[ci] !== undefined ? row[ci] : ''; });
               return obj;
             });
         } else {
-          /* Fallback: standard parse (headers in row 1) */
-          raw = XLSX.utils.sheet_to_json(ws, {defval:''});
+          /* Fallback: standard parse then normalise keys */
+          const fallback = XLSX.utils.sheet_to_json(ws, {defval:''});
+          raw = fallback.map(r => {
+            const obj = {};
+            Object.entries(r).forEach(([k,v]) => { obj[normCol(k)] = v; });
+            return obj;
+          });
         }
 
-        if (!raw.length) { setError('No data found — check that headers include "bbg_ticker" or "ticker"'); setParsing(false); return; }
+        /* Filter out hint/subtitle rows (row 5 in template has BBG field names) */
+        raw = raw.filter(r => {
+          const tick = (r.bbg_ticker || '').toString().trim();
+          return tick && !tick.startsWith('←') && !tick.startsWith('↑') && !tick.includes('auto-populates') && tick.length > 1;
+        });
+
+        if (!raw.length) { setError('No data rows found — check sheet has data with a ticker column (BBG Ticker, ticker, etc)'); setParsing(false); return; }
 
         /* Parse and normalise */
         const tickerMap = buildTickerMap(operators);
         const parsed = raw
-          .filter(r => r.bbg_ticker || r.BBG_TICKER || r.ticker || r.xa_ticker)
+          .filter(r => r.bbg_ticker)
           .map(r => {
-            const bbg = (r.bbg_ticker || r.BBG_TICKER || r.ticker || r.xa_ticker || '').toString().trim();
-            const price = parseFloat(r.price || r.Price || r.PX_LAST || r.px_last || 0);
-            const mktCap = parseFloat(r.mkt_cap_m || r.CUR_MKT_CAP || r.mkt_cap || 0);
+            const bbg = (r.bbg_ticker || '').toString().trim();
+            const price = parseFloat(r.price || 0);
+            const mktCap = parseFloat(r.mkt_cap_m || 0);
             const row = {
               bbg_ticker: bbg,
-              name: (r.name || r.Name || r.SECURITY_NAME || '').toString().trim(),
-              country: (r.country || r.Country || r.COUNTRY_ISO || '').toString().trim(),
-              gics_sector: (r.gics_sector || r.GICS_SECTOR_NAME || '').toString().trim(),
-              gics_industry: (r.gics_industry || r.GICS_INDUSTRY_GROUP_NAME || '').toString().trim(),
-              ccy: (r.ccy || r.Ccy || r.CRNCY || '').toString().trim(),
+              name: (r.name || '').toString().trim(),
+              country: (r.country || '').toString().trim(),
+              gics_sector: (r.gics_sector || '').toString().trim(),
+              gics_industry: (r.gics_industry || '').toString().trim(),
+              ccy: (r.ccy || '').toString().trim(),
               mkt_cap_m: mktCap,
               price: price,
-              fwd_pe: parseFloat(r.fwd_pe || r.BEST_PE_RATIO || 0),
-              trail_pe: parseFloat(r.trail_pe || r.PE_RATIO || 0),
-              fwd_ev_ebitda: parseFloat(r.fwd_ev_ebitda || r.BEST_EV_TO_EBITDA || 0),
-              pb: parseFloat(r.pb || r.PX_TO_BOOK_RATIO || 0),
-              ev_sales: parseFloat(r.ev_sales || r.BEST_EV_TO_BEST_SALES || 0),
-              roe_pct: parseFloat(r.roe_pct || r.RETURN_COM_EQY || 0),
-              op_margin_pct: parseFloat(r.op_margin_pct || r.OPER_MARGIN || 0),
-              net_margin_pct: parseFloat(r.net_margin_pct || r.PROF_MARGIN || 0),
-              fcf_per_sh: parseFloat(r.fcf_per_sh || r.CF_FREE_CASH_FLOW_PER_SH || 0),
-              chg_52w_pct: parseFloat(r.chg_52w_pct || r.CHG_PCT_52WK || 0),
-              eps_rev_3m_pct: parseFloat(r.eps_rev_3m_pct || r.BEST_EPS_3MO_PCT_CHG || 0),
-              beta: parseFloat(r.beta || r.EQY_BETA || 0),
-              nd_ebitda: parseFloat(r.nd_ebitda || r.TOT_DEBT_TO_EBITDA || 0),
-              div_yield_pct: parseFloat(r.div_yield_pct || r.EQY_DVD_YLD_IND || 0),
+              fwd_pe: parseFloat(r.fwd_pe || 0),
+              trail_pe: parseFloat(r.trail_pe || 0),
+              fwd_ev_ebitda: parseFloat(r.fwd_ev_ebitda || 0),
+              pb: parseFloat(r.pb || 0),
+              ev_sales: parseFloat(r.ev_sales || 0),
+              roe_pct: parseFloat(r.roe_pct || 0),
+              op_margin_pct: parseFloat(r.op_margin_pct || 0),
+              net_margin_pct: parseFloat(r.net_margin_pct || 0),
+              fcf_per_sh: parseFloat(r.fcf_per_sh || 0),
+              chg_52w_pct: parseFloat(r.chg_52w_pct || 0),
+              eps_rev_3m_pct: parseFloat(r.eps_rev_3m_pct || 0),
+              beta: parseFloat(r.beta || 0),
+              nd_ebitda: parseFloat(r.nd_ebitda || 0),
+              div_yield_pct: parseFloat(r.div_yield_pct || 0),
             };
 
             /* Match to operators */

@@ -518,7 +518,7 @@ function Header({view, setView}) {
 }
 
 /* ═══════════════ OVERVIEW ═══════════════ */
-function OverviewView({operators, globalDrivers}) {
+function OverviewView({operators, globalDrivers, setView}) {
   const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
   const totalNames = allStats.reduce((a,o) => a + o.stocks.length, 0);
   const totalLongs = allStats.reduce((a,o) => a + o.stats.longs, 0);
@@ -574,9 +574,9 @@ function OverviewView({operators, globalDrivers}) {
             <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
           </div>
           <div style={{padding:'8px 20px 14px'}}>
-            <a href={op.file} target="_blank" rel="noopener" style={{display:'block',textAlign:'center',padding:'8px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,textDecoration:'none',transition:'all .15s'}}>
+            <div onClick={() => setView('operators')} style={{display:'block',textAlign:'center',padding:'8px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,textDecoration:'none',transition:'all .15s'}}>
               Open {op.name} Engine →
-            </a>
+            </div>
           </div>
         </div>;
       })}
@@ -1692,7 +1692,7 @@ function App() {
   };
 
   let content;
-  if (view === 'overview') content = <OverviewView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers}/>;
+  if (view === 'overview') content = <OverviewView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers} setView={setView}/>;
   else if (view === 'macro') content = <MacroView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
   else if (view === 'operators') content = <OperatorsView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers}/>;
   else if (view === 'data') content = <DataView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers} snapData={snapData} setSnapData={onSnapUploaded}/>;

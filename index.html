@@ -75,7 +75,7 @@ function runEngine(stock,driverMap,globalDrivers){
   return{pr,ev,rr,skew,vd,tier};
 }
 
-const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;return`${v.toFixed(1)}`};
+const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;if(t==='price'){if(Math.abs(v)>=10000)return v.toLocaleString('en',{maximumFractionDigits:0});if(Math.abs(v)>=100)return v.toFixed(1);return v.toFixed(2)}return`${v.toFixed(1)}`};
 
 /* ═══════════════ OPERATOR REGISTRY ═══════════════ */
 const OPERATORS = [
@@ -612,66 +612,309 @@ function MacroView({operators, globalDrivers, setGlobalDrivers}) {
 }
 
 /* ═══════════════ OPERATORS VIEW ═══════════════ */
-function OperatorsView({operators, globalDrivers}) {
-  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
 
-  return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
-    <div style={{marginBottom:28}}>
-      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--p)',fontWeight:400,marginBottom:6}}>GRS · Pan Asian Operators</h1>
-      <p style={{fontSize:12,color:'var(--fg4)'}}>Click any operator to open its full interactive engine with scenario sliders, stock cards, and positioning data.</p>
-    </div>
-
-    {allStats.map(op => {
-      const s = op.stats;
-      const topLongs = s.results.filter(r => r.verdict==='long').sort((a,b) => (b.eng?.rr||0)-(a.eng?.rr||0)).slice(0,3);
-      const topShorts = s.results.filter(r => r.verdict==='short').sort((a,b) => (a.eng?.rr||0)-(b.eng?.rr||0)).slice(0,3);
-
-      return <div key={op.id} style={{marginBottom:20,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden'}}>
-        <div style={{padding:'18px 24px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <div style={{display:'flex',alignItems:'center',gap:12}}>
-            <span style={{fontSize:24}}>{op.icon}</span>
-            <div>
-              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <span style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
-                <span style={{fontSize:12,color:'var(--fg3)'}}>{op.team}</span>
-              </div>
-              <div style={{fontSize:11,color:'var(--fg4)',marginTop:2}}>{op.desc}</div>
-            </div>
-          </div>
-          <a href={op.file} target="_blank" rel="noopener" style={{padding:'8px 16px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,textDecoration:'none'}}>
-            Open Engine →
-          </a>
-        </div>
-
-        <div style={{padding:'14px 24px',display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12}}>
-          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
-          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Long R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--g)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
-          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Short R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--r)'}}>{fmt(s.avgShortRR,'pct')}</div></div>
-          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
-          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Drivers</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--y)'}}>{op.drivers.length}</div></div>
-          <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Regime</div><div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:s.regime.includes('BULL')?'var(--g)':s.regime.includes('BEAR')?'var(--r)':'var(--fg3)'}}>{s.regime}</div></div>
-        </div>
-
-        <div style={{padding:'0 24px 16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-          <div>
-            <div style={{fontSize:8,color:'var(--g)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Longs by R/R</div>
-            {topLongs.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
-              <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
-              <span style={{color:'var(--fg3)'}}>{s.name}</span>
-              <span style={{color:'var(--g)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
-            </div>)}
-          </div>
-          <div>
-            <div style={{fontSize:8,color:'var(--r)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Shorts by R/R</div>
-            {topShorts.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
-              <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
-              <span style={{color:'var(--fg3)'}}>{s.name}</span>
-              <span style={{color:'var(--r)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
-            </div>)}
-          </div>
-        </div>
+/* Pan Asian style: horizontal scenario bar */
+function ScenarioBarPA({probs, prices, currentPrice}) {
+  return <div style={{display:'flex',gap:1,height:26,borderRadius:4,overflow:'hidden'}}>
+    {probs.map((p,i) => {
+      const ret = ((prices[i]-currentPrice)/currentPrice*100);
+      return <div key={i} style={{
+        flex:p, background:SCENARIOS[i].color+'40', position:'relative',
+        display:'flex',alignItems:'center',justifyContent:'center',
+        borderRight:i<6?'1px solid var(--bg)':'none',
+      }} title={`${SCENARIOS[i].label}: ${p.toFixed(1)}% → ${fmt(prices[i],'price')} (${ret>=0?'+':''}${ret.toFixed(0)}%)`}>
+        {p>7 && <span style={{fontSize:8,fontFamily:'var(--mono)',color:SCENARIOS[i].color,fontWeight:700}}>{p.toFixed(0)}%</span>}
       </div>;
     })}
+  </div>;
+}
+
+/* Pan Asian style: stock row with horizontal bar */
+function StockRowPA({stock, eng, rank}) {
+  const isLong = stock.verdict === 'long';
+  const vc = eng.rr>15?'var(--g)':eng.rr>5?'#22c55e':eng.rr<-5?'var(--r)':'var(--fg3)';
+  return <div style={{
+    background:'var(--bg1)',borderRadius:8,padding:'14px 18px',marginBottom:6,
+    border:'1px solid var(--border)',borderLeft:`3px solid ${isLong?'var(--g)':'var(--r)'}`,
+    animation:`fadeIn .3s ease ${rank*0.03}s both`,
+  }}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <span style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:700,color:'var(--fg)'}}>{stock.ticker}</span>
+        <span style={{fontSize:12,color:'var(--fg3)'}}>{stock.name}</span>
+        <Badge color={isLong?'var(--g)':'var(--r)'}>{stock.verdict.toUpperCase()}</Badge>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:16}}>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>NOW</div>
+          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700}}>{fmt(stock.currentPrice,'price')}</div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>EV</div>
+          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:eng.ev>stock.currentPrice?'var(--g)':'var(--r)'}}>{fmt(eng.ev,'price')}</div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>R/R</div>
+          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:vc}}>{fmt(eng.rr,'pct')}</div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>SKEW</div>
+          <div style={{fontSize:12,fontFamily:'var(--mono)',color:eng.skew>1?'var(--g)':'var(--r)'}}>{eng.skew.toFixed(2)}x</div>
+        </div>
+        <Badge color={vc} style={{minWidth:80,justifyContent:'center'}}>{eng.vd}</Badge>
+      </div>
+    </div>
+    <ScenarioBarPA probs={eng.pr} prices={stock.prices} currentPrice={stock.currentPrice} />
+  </div>;
+}
+
+/* GRS style: compact card with vertical probability bars */
+function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
+  const mx = Math.max(...eng.pr);
+  const isLong = stock.verdict === 'long';
+  const vc = eng.vd.includes('LONG')?'var(--g)':eng.vd.includes('SHORT')?'var(--r)':'var(--fg3)';
+  const tc = eng.tier==='Core'?'var(--y)':eng.tier==='Satellite'?'var(--b)':'var(--fg4)';
+  const mdd = ((Math.min(...stock.prices)-stock.currentPrice)/stock.currentPrice*100);
+  const mxu = ((Math.max(...stock.prices)-stock.currentPrice)/stock.currentPrice*100);
+
+  return <div style={{background:'var(--bg1)',borderRadius:10,border:'1px solid var(--border)',borderLeft:`3px solid ${isLong?'var(--g)':'var(--r)'}`,overflow:'hidden',marginBottom:6}}>
+    <div onClick={toggle} style={{padding:'12px 14px',cursor:'pointer',display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
+      <div style={{minWidth:110}}>
+        <div style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:700,color:'var(--fg)'}}>{stock.ticker}</div>
+        <div style={{fontSize:11,color:'var(--fg3)',marginTop:1}}>{stock.name}</div>
+      </div>
+      <div style={{flex:1,minWidth:160}}>
+        <div style={{display:'flex',alignItems:'flex-end',gap:2,height:50,marginBottom:3}}>
+          {eng.pr.map((p,i) => <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center'}}>
+            <span style={{fontSize:7,fontFamily:'var(--mono)',color:'var(--fg3)',marginBottom:1}}>{p.toFixed(0)}%</span>
+            <div style={{width:'100%',height:`${(p/mx)*38}px`,background:`linear-gradient(180deg, ${SCENARIOS[i].color}bb, ${SCENARIOS[i].color}33)`,borderRadius:'2px 2px 0 0',border:`1px solid ${SCENARIOS[i].color}55`}} />
+          </div>)}
+        </div>
+        <div style={{display:'flex',gap:2}}>
+          {stock.prices.map((s,i) => <div key={i} style={{flex:1,textAlign:'center',fontSize:7,fontFamily:'var(--mono)',color:SCENARIOS[i].color}}>{fmt(s,'price')}</div>)}
+        </div>
+      </div>
+      <div style={{minWidth:115,textAlign:'right'}}>
+        <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)'}}>Now: {fmt(stock.currentPrice,'price')}</div>
+        <div style={{fontSize:15,fontFamily:'var(--mono)',fontWeight:700,color:'#6366f1'}}>EV: {fmt(eng.ev,'price')}</div>
+        <div style={{fontSize:12,fontFamily:'var(--mono)',color:eng.rr>0?'var(--g)':'var(--r)',fontWeight:700}}>{fmt(eng.rr,'pct')}</div>
+      </div>
+      <div style={{minWidth:90,textAlign:'right'}}>
+        <div style={{fontFamily:'var(--mono)',fontSize:11,fontWeight:700,color:vc}}>{eng.vd}</div>
+        <div style={{fontFamily:'var(--mono)',fontSize:10,color:tc,marginTop:2}}>{eng.tier}</div>
+        <div style={{fontFamily:'var(--mono)',fontSize:10,color:eng.skew>1?'#22d3ee':'#f97316',marginTop:2}}>Skew {eng.skew.toFixed(2)}</div>
+      </div>
+    </div>
+    {open && <div style={{padding:'0 14px 14px',borderTop:'1px solid var(--border)'}}>
+      {/* 7-scenario detail grid */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7, 1fr)',gap:6,marginTop:12}}>
+        {SCENARIOS.map((s,i) => <div key={s.id} style={{background:'var(--bg)',borderRadius:6,padding:8,textAlign:'center',border:`1px solid ${s.color}22`}}>
+          <div style={{fontSize:8,fontFamily:'var(--mono)',color:s.color,fontWeight:600,marginBottom:3}}>{s.label}</div>
+          <div style={{fontSize:13,fontFamily:'var(--mono)',color:'var(--fg)',fontWeight:700}}>{fmt(stock.prices[i],'price')}</div>
+          <div style={{fontSize:10,fontFamily:'var(--mono)',color:s.color,marginTop:2}}>{eng.pr[i].toFixed(1)}%</div>
+          <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:2}}>
+            {(((stock.prices[i]-stock.currentPrice)/stock.currentPrice)*100).toFixed(0)}%
+          </div>
+        </div>)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:12}}>
+        {/* Risk panel */}
+        <div style={{background:'var(--bg)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
+          <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg3)',letterSpacing:1,marginBottom:6}}>RISK</div>
+          {[['Max Drawdown',`${mdd.toFixed(0)}%`,'var(--r)'],['Max Upside',`+${mxu.toFixed(0)}%`,'var(--g)'],['Skew Ratio',eng.skew.toFixed(2),eng.skew>1?'#22d3ee':'#f97316'],['Tier',eng.tier,tc]]
+            .map(([k,va,co]) => <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'var(--mono)',padding:'2px 0'}}>
+              <span style={{color:'var(--fg3)'}}>{k}</span><span style={{color:co,fontWeight:600}}>{va}</span>
+            </div>)}
+        </div>
+        {/* Macro sensitivity */}
+        <div style={{background:'var(--bg)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
+          <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg3)',letterSpacing:1,marginBottom:6}}>MACRO SENSITIVITY</div>
+          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+            {driverMap.map(m => {
+              const sv = stock.sens?.[m.driverId] || 0;
+              const dl = drivers.find(d => d.id === m.driverId);
+              return <div key={m.driverId} style={{background:'var(--bg1)',borderRadius:4,padding:'3px 7px',border:'1px solid var(--border)',fontSize:10,fontFamily:'var(--mono)'}}>
+                <span style={{color:'var(--fg4)'}}>{(dl?.label||m.driverId).split(' ')[0]}: </span>
+                <span style={{color:sv>0?'var(--g)':sv<0?'var(--r)':'var(--fg4)',fontWeight:600}}>{sv>0?'+':''}{sv.toFixed(1)}</span>
+              </div>;
+            })}
+          </div>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+/* Main Operators View with inline detail */
+function OperatorsView({operators, globalDrivers}) {
+  const [selectedOp, setSelectedOp] = useState(null);
+  const [viewMode, setViewMode] = useState('card'); /* 'card' or 'row' */
+  const [sortBy, setSortBy] = useState('rr');
+  const [openCards, setOpenCards] = useState({});
+  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
+
+  const toggleCard = (ticker) => setOpenCards(prev => ({...prev, [ticker]: !prev[ticker]}));
+
+  /* OPERATOR LIST VIEW */
+  if (!selectedOp) {
+    return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+      <div style={{marginBottom:28}}>
+        <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--p)',fontWeight:400,marginBottom:6}}>Operators</h1>
+        <p style={{fontSize:12,color:'var(--fg4)'}}>Click any operator to open its inline engine with full stock detail, scenario bars, and risk metrics.</p>
+      </div>
+      {allStats.map(op => {
+        const s = op.stats;
+        const topLongs = s.results.filter(r => r.verdict==='long').sort((a,b) => (b.eng?.rr||0)-(a.eng?.rr||0)).slice(0,3);
+        const topShorts = s.results.filter(r => r.verdict==='short').sort((a,b) => (a.eng?.rr||0)-(b.eng?.rr||0)).slice(0,3);
+        return <div key={op.id} onClick={() => setSelectedOp(op.id)} style={{marginBottom:20,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden',cursor:'pointer',transition:'border-color .15s'}}
+          onMouseEnter={e => e.currentTarget.style.borderColor = op.color+'60'}
+          onMouseLeave={e => e.currentTarget.style.borderColor = op.color+'15'}>
+          <div style={{padding:'18px 24px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'center',gap:12}}>
+              <span style={{fontSize:24}}>{op.icon}</span>
+              <div>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+                  <span style={{fontSize:12,color:'var(--fg3)'}}>{op.team}</span>
+                </div>
+                <div style={{fontSize:11,color:'var(--fg4)',marginTop:2}}>{op.desc}</div>
+              </div>
+            </div>
+            <span style={{fontSize:11,fontFamily:'var(--mono)',color:op.color}}>View Detail →</span>
+          </div>
+          <div style={{padding:'14px 24px',display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12}}>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Long R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--g)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Short R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--r)'}}>{fmt(s.avgShortRR,'pct')}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Drivers</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--y)'}}>{op.drivers.length}</div></div>
+            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Regime</div><div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:s.regime.includes('BULL')?'var(--g)':s.regime.includes('BEAR')?'var(--r)':'var(--fg3)'}}>{s.regime}</div></div>
+          </div>
+          <div style={{padding:'0 24px 16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+            <div>
+              <div style={{fontSize:8,color:'var(--g)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Longs by R/R</div>
+              {topLongs.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
+                <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
+                <span style={{color:'var(--fg3)'}}>{s.name}</span>
+                <span style={{color:'var(--g)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
+              </div>)}
+            </div>
+            <div>
+              <div style={{fontSize:8,color:'var(--r)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Shorts by R/R</div>
+              {topShorts.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
+                <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
+                <span style={{color:'var(--fg3)'}}>{s.name}</span>
+                <span style={{color:'var(--r)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
+              </div>)}
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>;
+  }
+
+  /* OPERATOR DETAIL VIEW */
+  const op = allStats.find(o => o.id === selectedOp);
+  if (!op) return null;
+  const s = op.stats;
+  const results = s.results.map(r => ({...r}));
+
+  /* Sort */
+  const sorted = [...results];
+  if (sortBy === 'rr') sorted.sort((a,b) => Math.abs(b.eng?.rr||0) - Math.abs(a.eng?.rr||0));
+  if (sortBy === 'skew') sorted.sort((a,b) => (b.eng?.skew||0) - (a.eng?.skew||0));
+  if (sortBy === 'alpha') sorted.sort((a,b) => a.ticker.localeCompare(b.ticker));
+  if (sortBy === 'side') sorted.sort((a,b) => (a.verdict==='long'?0:1) - (b.verdict==='long'?0:1));
+  if (sortBy === 'ev') sorted.sort((a,b) => (b.eng?.ev||0) - (a.eng?.ev||0));
+
+  const compositeSignal = globalDrivers.reduce((sum,d) => {
+    const dm = op.driverMap.find(m => m.driverId === d.id);
+    return sum + (d.signal * (dm ? dm.weight : 0) / 100);
+  }, 0);
+
+  let regime = 'NEUTRAL';
+  if (compositeSignal > 0.15) regime = 'BULLISH';
+  if (compositeSignal > 0.35) regime = 'STRONG BULL';
+  if (compositeSignal < -0.15) regime = 'BEARISH';
+  if (compositeSignal < -0.35) regime = 'STRONG BEAR';
+  const regimeColor = regime.includes('BULL') ? 'var(--g)' : regime.includes('BEAR') ? 'var(--r)' : 'var(--fg3)';
+
+  const longs = results.filter(r => r.verdict === 'long');
+  const shorts = results.filter(r => r.verdict === 'short');
+  const avgLongRR = longs.length ? longs.reduce((a,r) => a + (r.eng?.rr||0), 0) / longs.length : 0;
+  const avgShortRR = shorts.length ? shorts.reduce((a,r) => a + (r.eng?.rr||0), 0) / shorts.length : 0;
+
+  return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    {/* Back + Header */}
+    <div style={{marginBottom:24}}>
+      <button onClick={() => setSelectedOp(null)} style={{border:'none',background:'transparent',color:'var(--fg4)',fontFamily:'var(--mono)',fontSize:12,cursor:'pointer',padding:'4px 0',marginBottom:8}}>← All Operators</button>
+      <div style={{display:'flex',alignItems:'center',gap:14}}>
+        <span style={{fontSize:32}}>{op.icon}</span>
+        <div>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:26,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+            <Badge color={op.color}>{op.team}</Badge>
+            <Badge color={regimeColor}>{regime}</Badge>
+          </div>
+          <div style={{fontSize:12,color:'var(--fg4)',marginTop:3}}>{op.desc}</div>
+        </div>
+      </div>
+    </div>
+
+    {/* Stats Row */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:10,marginBottom:24}}>
+      {[
+        ['Stocks',results.length,'var(--fg)'],
+        ['Longs',longs.length,'var(--g)'],
+        ['Shorts',shorts.length,'var(--r)'],
+        ['Avg Long R/R',fmt(avgLongRR,'pct'),'var(--g)'],
+        ['Avg Short R/R',fmt(avgShortRR,'pct'),'var(--r)'],
+        ['Avg Skew',`${s.avgSkew.toFixed(2)}x`,s.avgSkew>1?'var(--g)':'var(--fg3)'],
+        ['Composite',`${compositeSignal>=0?'+':''}${compositeSignal.toFixed(2)}`,regimeColor],
+      ].map(([l,v,c]) => <div key={l} style={{padding:'12px 14px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:4}}>{l}</div>
+        <div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
+      </div>)}
+    </div>
+
+    {/* Macro Drivers compact strip */}
+    <div style={{marginBottom:24,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 18px'}}>
+      <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:10}}>Active Macro Drivers</div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        {op.driverMap.map(m => {
+          const gd = globalDrivers.find(d => d.id === m.driverId);
+          const sig = gd ? gd.signal : 0;
+          const sc = sig > 0 ? 'var(--g)' : sig < 0 ? 'var(--r)' : 'var(--fg4)';
+          return <div key={m.driverId} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:'var(--bg1)',borderRadius:6,border:'1px solid var(--border)'}}>
+            <span style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)'}}>{(gd?.label||m.driverId)}</span>
+            <span style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>{sig>=0?'+':''}{sig.toFixed(1)}</span>
+            <span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{m.weight}%</span>
+          </div>;
+        })}
+      </div>
+    </div>
+
+    {/* View toggle + Sort controls */}
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+      <div style={{display:'flex',gap:6}}>
+        <Btn active={viewMode==='card'} onClick={() => setViewMode('card')}>◆ Card View</Btn>
+        <Btn active={viewMode==='row'} onClick={() => setViewMode('row')}>≡ Row View</Btn>
+      </div>
+      <div style={{display:'flex',gap:4,alignItems:'center'}}>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginRight:4}}>SORT:</span>
+        {[['rr','R/R'],['skew','Skew'],['alpha','A-Z'],['side','Side'],['ev','EV']].map(([k,l]) =>
+          <Btn key={k} active={sortBy===k} onClick={() => setSortBy(k)} small>{l}</Btn>
+        )}
+      </div>
+    </div>
+
+    {/* Stock list */}
+    {viewMode === 'row'
+      ? sorted.map((r,i) => <StockRowPA key={r.ticker} stock={r} eng={r.eng} rank={i} />)
+      : sorted.map((r,i) => <StockCardGRS key={r.ticker} stock={r} eng={r.eng}
+          drivers={op.drivers} driverMap={op.driverMap}
+          open={!!openCards[r.ticker]} toggle={() => toggleCard(r.ticker)} />)
+    }
   </div>;
 }
 

@@ -1184,13 +1184,13 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           })
           .filter(r => r.price > 0);
 
-        /* Apply $1bn filter */
+        /* Apply $1bn filter for universe browser only */
         const filtered = parsed.filter(r => !r.mkt_cap_m || r.mkt_cap_m >= 1000);
 
-        /* Update operator stock prices from direct matches */
+        /* Update operator stock prices from ALL direct matches (not filtered — small caps like NAS need prices too) */
         let priceUpdates = 0;
         const priceMap = {};
-        filtered.forEach(r => {
+        parsed.forEach(r => {
           if (r.is_direct_match && r.matched_ticker) {
             priceMap[r.matched_ticker] = r.price;
             priceUpdates++;
@@ -1199,8 +1199,11 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
 
         /* Debug: log a sample of price mappings */
         const priceEntries = Object.entries(priceMap);
-        console.log(`[XA Data Hub] priceMap has ${priceEntries.length} entries. Sample:`,
-          priceEntries.slice(0, 10).map(([k,v]) => `${k}=${v}`).join(', '));
+        console.log(`[XA Data Hub] priceMap has ${priceEntries.length} entries (built from ALL ${parsed.length} rows, not just filtered ${filtered.length}).`);
+        console.log(`[XA Data Hub] Sample:`, priceEntries.slice(0, 10).map(([k,v]) => `${k}=${v}`).join(', '));
+        /* Flag small-cap operator stocks that would have been missed by $1bn filter */
+        const smallCapHits = parsed.filter(r => r.is_direct_match && r.matched_ticker && r.mkt_cap_m > 0 && r.mkt_cap_m < 1000);
+        if (smallCapHits.length) console.log(`[XA Data Hub] ⚠ ${smallCapHits.length} operator stocks under $1bn got prices (would have been missed by old filter):`, smallCapHits.map(r => `${r.matched_ticker}=$${r.price} (mktcap ${r.mkt_cap_m}M)`).join(', '));
 
         /* Track unmatched operator stocks */
         const allOpStocks = operators.flatMap(op => op.stocks.map(s => ({ticker: s.ticker, name: s.name, opName: op.name})));

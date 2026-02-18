@@ -718,40 +718,55 @@ function matchOperators(row) {
   return matches;
 }
 
-/* Normalise ticker for matching (strip exchange suffixes, leading zeros) */
+/* Normalise ticker for matching (strip Equity/Index suffix, slashes, extra spaces, leading zeros) */
 function normTicker(t) {
   if (!t) return '';
-  return t.replace(/\s+(Equity|Index)$/i,'').replace(/\s+/g,' ').trim().toUpperCase();
+  return t.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').replace(/\s+/g,' ').trim().toUpperCase();
 }
 
 /* Build a lookup map from BBG tickers to XA operator tickers */
+/* Includes explicit aliases for Singapore and other non-standard mappings */
+const BBG_ALIASES = {
+  'DBS SP': 'D05.SI', 'OCBC SP': 'O39.SI', 'UOB SP': 'U11.SI',
+  'CLAR SP': 'A17U.SI', 'KEP SP': 'BN4.SI', 'ST SP': 'Z74.SI',
+  'SIA SP': 'C6L.SI', 'WIL SP': 'F34.SI', 'SGX SP': 'S68.SI',
+  'SE US': 'SE', 'BA LN': 'BA.L', 'BP LN': 'BP.L', 'RR LN': 'RR.L',
+  'FLIR US': 'FLIR', 'RYA ID': 'RYA.L',
+};
+
 function buildTickerMap(operators) {
   const map = {};
   operators.forEach(op => {
     op.stocks.forEach(s => {
+      const t = s.ticker;
       const variants = [
-        s.ticker.toUpperCase(),
-        s.ticker.replace('.HK','').replace(/^0+/,'') + ' HK',
-        s.ticker.replace('.T','') + ' JP',
-        s.ticker.replace('.TW','') + ' TT',
-        s.ticker.replace('.KS','') + ' KS',
-        s.ticker.replace('.SI','') + ' SP',
-        s.ticker.replace('.SZ','') + ' CH',
-        s.ticker.replace('.SH','') + ' CH',
-        s.ticker.replace('.L','') + ' LN',
-        s.ticker.replace('.DE','') + ' GR',
-        s.ticker.replace('.PA','') + ' FP',
-        s.ticker.replace('.MI','') + ' IM',
-        s.ticker.replace('.MC','') + ' SM',
-        s.ticker.replace('.OL','') + ' NO',
-        s.ticker.replace('.AS','') + ' NA',
-        s.ticker.replace('.AX','') + ' AU',
-        s.ticker.replace('.SW','') + ' SW',
-        s.ticker.replace('.IS','') + ' TI',
-        s.ticker + ' US',
+        t.toUpperCase(),
+        t.replace('.HK','').replace(/^0+/,'') + ' HK',
+        t.replace('.T','') + ' JP',
+        t.replace('.TW','') + ' TT',
+        t.replace('.KS','') + ' KS',
+        t.replace('.SI','') + ' SP',
+        t.replace('.SZ','') + ' CH',
+        t.replace('.SH','') + ' CH',
+        t.replace('.L','') + ' LN',
+        t.replace('.DE','') + ' GR',
+        t.replace('.PA','') + ' FP',
+        t.replace('.MI','') + ' IM',
+        t.replace('.MC','') + ' SM',
+        t.replace('.OL','') + ' NO',
+        t.replace('.AS','') + ' NA',
+        t.replace('.AX','') + ' AU',
+        t.replace('.SW','') + ' SW',
+        t.replace('.IS','') + ' TI',
+        t + ' US',
       ];
-      variants.forEach(v => { map[v.toUpperCase()] = { opId: op.id, ticker: s.ticker }; });
+      variants.forEach(v => { map[v.toUpperCase()] = { opId: op.id, ticker: t }; });
     });
+  });
+  /* Add explicit BBG aliases */
+  Object.entries(BBG_ALIASES).forEach(([bbg, xaTicker]) => {
+    const op = operators.find(o => o.stocks.some(s => s.ticker === xaTicker));
+    if (op) map[bbg.toUpperCase()] = { opId: op.id, ticker: xaTicker };
   });
   return map;
 }
@@ -777,9 +792,35 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         /* Try Upload sheet first, fall back to first sheet */
         const sheetName = wb.SheetNames.includes('Upload') ? 'Upload' : wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
-        const raw = XLSX.utils.sheet_to_json(ws, {defval:''});
 
-        if (!raw.length) { setError('No data found in sheet'); setParsing(false); return; }
+        /* Find header row: scan for row containing 'bbg_ticker' or 'ticker' */
+        const allRows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        let headerIdx = -1;
+        const HEADER_MARKERS = ['bbg_ticker','ticker','BBG_TICKER','Ticker','xa_ticker'];
+        for (let i = 0; i < Math.min(allRows.length, 20); i++) {
+          const row = allRows[i];
+          if (Array.isArray(row) && row.some(c => HEADER_MARKERS.includes(String(c).trim()))) {
+            headerIdx = i; break;
+          }
+        }
+
+        let raw;
+        if (headerIdx >= 0) {
+          /* Re-parse using discovered header row */
+          const headers = allRows[headerIdx].map(h => String(h).trim());
+          raw = allRows.slice(headerIdx + 1)
+            .filter(row => row.some(c => c !== ''))
+            .map(row => {
+              const obj = {};
+              headers.forEach((h, ci) => { obj[h] = row[ci] !== undefined ? row[ci] : ''; });
+              return obj;
+            });
+        } else {
+          /* Fallback: standard parse (headers in row 1) */
+          raw = XLSX.utils.sheet_to_json(ws, {defval:''});
+        }
+
+        if (!raw.length) { setError('No data found — check that headers include "bbg_ticker" or "ticker"'); setParsing(false); return; }
 
         /* Parse and normalise */
         const tickerMap = buildTickerMap(operators);

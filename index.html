@@ -30,14 +30,20 @@ window.livePrice = function(ticker, hardcoded) {
   var p = window.XA_PRICES[ticker];
   return p != null ? p : hardcoded;
 };
-/* Load from localStorage on page load */
+/* Load from localStorage on page load — try dedicated key first, then full snap */
 try {
-  var saved = JSON.parse(localStorage.getItem('xa_snap_v3'));
-  if (saved && saved.priceMap) {
-    window.XA_PRICES = saved.priceMap;
-    console.log('[XA boot] Loaded ' + Object.keys(saved.priceMap).length + ' prices. NAS.OL=' + saved.priceMap['NAS.OL']);
+  var pm = JSON.parse(localStorage.getItem('xa_prices'));
+  if (pm && Object.keys(pm).length > 0) {
+    window.XA_PRICES = pm;
+    console.log('[XA boot] Loaded ' + Object.keys(pm).length + ' prices from xa_prices. NAS.OL=' + pm['NAS.OL']);
   } else {
-    console.log('[XA boot] No saved priceMap in localStorage');
+    var saved = JSON.parse(localStorage.getItem('xa_snap_v3'));
+    if (saved && saved.priceMap) {
+      window.XA_PRICES = saved.priceMap;
+      console.log('[XA boot] Loaded ' + Object.keys(saved.priceMap).length + ' prices from xa_snap_v3. NAS.OL=' + saved.priceMap['NAS.OL']);
+    } else {
+      console.log('[XA boot] No saved prices in localStorage');
+    }
   }
 } catch(e) {
   console.log('[XA boot] localStorage parse error:', e);
@@ -1291,6 +1297,16 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         };
 
         setSnapData(newSnap);
+
+        /* Save priceMap to dedicated small key — always succeeds */
+        try {
+          localStorage.setItem('xa_prices', JSON.stringify(priceMap));
+          console.log('[XA Data Hub] priceMap saved to xa_prices key OK (' + Object.keys(priceMap).length + ' entries)');
+        } catch(e) {
+          console.warn('[XA Data Hub] xa_prices save failed:', e.message);
+        }
+
+        /* Try saving full snap (may fail due to size) */
         try {
           LS.set('xa_snap_v3', newSnap);
           console.log('[XA Data Hub] Snap saved to localStorage OK');
@@ -1355,6 +1371,10 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           console.warn('[XA Data Hub] api.json generation failed:', apiErr.message);
         }
         setParsing(false);
+
+        /* Reload page to force React to render with patched OPERATORS */
+        console.log('[XA Data Hub] Reloading page to apply prices...');
+        setTimeout(() => window.location.reload(), 500);
       } catch(err) {
         setError('Parse error: ' + err.message);
         setParsing(false);
@@ -1368,7 +1388,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
   const handleDragLeave = () => setDragOver(false);
   const handleClick = () => fileRef.current?.click();
   const handleFileInput = (e) => { if (e.target.files[0]) parseFile(e.target.files[0]); };
-  const clearSnap = () => { if(confirm('Clear universe data?')){ window.XA_PRICES = {}; setSnapData(null); localStorage.removeItem('xa_snap_v3'); }};
+  const clearSnap = () => { if(confirm('Clear universe data?')){ window.XA_PRICES = {}; setSnapData(null); localStorage.removeItem('xa_snap_v3'); localStorage.removeItem('xa_prices'); }};
 
   /* Coverage stats per operator */
   const opCoverage = useMemo(() => {

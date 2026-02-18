@@ -718,129 +718,101 @@ function matchOperators(row) {
   return matches;
 }
 
-/* Normalise ticker for matching — collapses BBG exchange codes to composite */
-const EXCH_MAP = {
-  'UW':'US','UN':'US','UP':'US','UA':'US','UQ':'US','UR':'US','UV':'US',
-  'LS':'LN','LI':'LN','CT':'CN',
-  'GY':'GR','GF':'GR',
-  'JT':'JP',
-  'KP':'KS',
-  'SI':'SP',
-  'AT':'AU',
-  'SE':'SW','VX':'SW',
-  'MI':'IM',
-  'PA':'FP','EN':'FP',
-  'MC':'SM','SQ':'SM',
-  'OL':'NO',
-  'AS':'NA',
-  'BB':'ID',
-  'IS':'TI',
-  'CO':'DC',
+/* ═══════════════ TICKER MATCHING — STRIP FIRST ═══════════════ */
+
+/* Hardcoded aliases for tickers where BBG symbol ≠ XA symbol (especially Singapore SGX codes) */
+const TICKER_ALIASES = {
+  /* Singapore: BBG uses company tickers, XA uses SGX board codes */
+  'DBS':'D05.SI', 'OCBC':'O39.SI', 'UOB':'U11.SI',
+  'CLAR':'A17U.SI', 'KEP':'BN4.SI', 'ST':'Z74.SI',
+  'SIA':'C6L.SI', 'WIL':'F34.SI', 'SGX':'S68.SI',
 };
-function normTicker(t) {
+
+/* Strip ANY ticker to its bare symbol: "NAS NO Equity" → "NAS", "NAS.OL" → "NAS", "0700.HK" → "700" */
+function stripTicker(t) {
   if (!t) return '';
-  let s = t.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').replace(/\s+/g,' ').trim().toUpperCase();
-  const parts = s.split(' ');
-  if (parts.length === 2 && EXCH_MAP[parts[1]]) {
-    parts[1] = EXCH_MAP[parts[1]];
-    s = parts.join(' ');
-  }
-  return s;
+  return t
+    .replace(/\s+(Equity|Index)$/i, '')  /* remove yellow key */
+    .replace(/\.[A-Z]{1,3}$/i, '')       /* remove .OL .HK .T .DE etc */
+    .replace(/\//g, '')                   /* remove slashes (BA/ LN) */
+    .split(/\s+/)[0]                      /* take first part before space (NAS from "NAS NO") */
+    .replace(/^0+(\d)/, '$1')             /* strip leading zeros but keep at least 1 digit */
+    .toUpperCase()
+    .trim();
 }
 
-/* Reverse map: BBG exchange code → XA ticker suffix */
-const BBG_TO_XA = {
-  'US':['',''], 'UW':['',''], 'UN':['',''], 'UP':['',''], 'UA':['',''], 'UQ':['',''],
-  'CN':['','.TO'], 'CT':['','.TO'],
-  'LN':['.L'], 'LS':['.L'], 'LI':['.L'],
-  'GR':['.DE'], 'GY':['.DE'], 'GF':['.DE'],
-  'FP':['.PA'], 'PA':['.PA'], 'EN':['.PA'],
-  'IM':['.MI'], 'MI':['.MI'],
-  'SM':['.MC'], 'MC':['.MC'], 'SQ':['.MC'],
-  'NA':['.AS'], 'AS':['.AS'],
-  'NO':['.OL'], 'OL':['.OL'],
-  'SW':['.SW'], 'SE':['.SW'], 'VX':['.SW'],
-  'TI':['.IS'], 'IS':['.IS'],
-  'DC':['.CO'], 'CO':['.CO'],
-  'ID':['.JK'],
-  'JP':['.T'], 'JT':['.T'],
-  'HK':['.HK'],
-  'TT':['.TW'],
-  'KS':['.KS'], 'KP':['.KS'],
-  'SP':['.SI'],
-  'AU':['.AX'], 'AT':['.AX'], 'AX':['.AX'],
-  'CH':['.SZ','.SH'],
-  'BB':['.BK'],
-};
+/* Build lookup indices from operator stocks */
+function buildMatchIndices(operators) {
+  const byTicker = {};  /* stripped ticker → [{opId, ticker, name}] */
+  const byName = {};    /* lowercase name fragment → [{opId, ticker, name}] */
 
-/* Convert BBG ticker to all possible XA ticker formats */
-function bbgToXA(bbg) {
-  const clean = bbg.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').trim();
-  const parts = clean.split(/\s+/);
-  if (parts.length !== 2) return [clean, clean.toUpperCase()]; /* No exchange code, try as-is */
-  const [sym, exch] = parts;
-  const suffixes = BBG_TO_XA[exch.toUpperCase()] || [''];
-  const results = [];
-  suffixes.forEach(sfx => {
-    results.push(sym + sfx);
-    if (exch.toUpperCase() === 'HK') {
-      /* HK tickers: try with and without leading zeros (0700.HK vs 700.HK) */
-      results.push(sym.padStart(4,'0') + sfx);
-      results.push(sym.replace(/^0+/,'') + sfx);
-    }
-  });
-  return results;
-}
-
-/* Build a lookup map from BBG tickers to XA operator tickers */
-/* Includes explicit aliases for Singapore and other non-standard mappings */
-const BBG_ALIASES = {
-  'DBS SP': 'D05.SI', 'OCBC SP': 'O39.SI', 'UOB SP': 'U11.SI',
-  'CLAR SP': 'A17U.SI', 'KEP SP': 'BN4.SI', 'ST SP': 'Z74.SI',
-  'SIA SP': 'C6L.SI', 'WIL SP': 'F34.SI', 'SGX SP': 'S68.SI',
-  'SE US': 'SE', 'BA LN': 'BA.L', 'BP LN': 'BP.L', 'RR LN': 'RR.L',
-  'FLIR US': 'FLIR', 'RYA ID': 'RYA.L',
-};
-
-function buildTickerMap(operators) {
-  const map = {};
   operators.forEach(op => {
     op.stocks.forEach(s => {
-      const t = s.ticker;
-      const variants = [
-        t.toUpperCase(),
-        t.replace('.HK','').replace(/^0+/,'') + ' HK',
-        '0' + t.replace('.HK','').replace(/^0+/,'') + ' HK',  /* with leading zero */
-        t.replace('.T','') + ' JP',
-        t.replace('.TW','') + ' TT',
-        t.replace('.KS','') + ' KS',
-        t.replace('.SI','') + ' SP',
-        t.replace('.SZ','') + ' CH',
-        t.replace('.SH','') + ' CH',
-        t.replace('.L','') + ' LN',
-        t.replace('.DE','') + ' GR',
-        t.replace('.PA','') + ' FP',
-        t.replace('.MI','') + ' IM',
-        t.replace('.MC','') + ' SM',
-        t.replace('.OL','') + ' NO',
-        t.replace('.AS','') + ' NA',
-        t.replace('.AX','') + ' AU',
-        t.replace('.SW','') + ' SW',
-        t.replace('.IS','') + ' TI',
-        t + ' US',
-      ];
-      variants.forEach(v => {
-        const key = normTicker(v);
-        if (key) map[key] = { opId: op.id, ticker: t };
-      });
+      const stripped = stripTicker(s.ticker);
+      if (!byTicker[stripped]) byTicker[stripped] = [];
+      byTicker[stripped].push({ opId: op.id, ticker: s.ticker, name: s.name });
+
+      /* Index by name words (3+ chars) for fuzzy matching */
+      const nameLower = s.name.toLowerCase();
+      byName[nameLower] = byName[nameLower] || [];
+      byName[nameLower].push({ opId: op.id, ticker: s.ticker, name: s.name });
     });
   });
-  /* Add explicit BBG aliases */
-  Object.entries(BBG_ALIASES).forEach(([bbg, xaTicker]) => {
-    const op = operators.find(o => o.stocks.some(s => s.ticker === xaTicker));
-    if (op) map[bbg.toUpperCase()] = { opId: op.id, ticker: xaTicker };
-  });
-  return map;
+
+  return { byTicker, byName };
+}
+
+/* Match a BBG row to operator stocks. Returns {ticker, opIds} or null */
+function matchToOperators(bbgTicker, bbgName, operators, indices) {
+  const { byTicker, byName } = indices;
+  const stripped = stripTicker(bbgTicker);
+
+  /* Layer 0: Hardcoded aliases (Singapore SGX codes etc) */
+  if (stripped && TICKER_ALIASES[stripped]) {
+    const xaTicker = TICKER_ALIASES[stripped];
+    const opIds = operators.filter(op => op.stocks.some(s => s.ticker === xaTicker)).map(op => op.id);
+    if (opIds.length) return { ticker: xaTicker, opIds };
+  }
+
+  /* Layer 1: Strip BBG ticker → look up */
+  if (stripped && byTicker[stripped]) {
+    const matches = byTicker[stripped];
+    const ticker = matches[0].ticker;
+    const opIds = [...new Set(matches.map(m => m.opId))];
+    return { ticker, opIds };
+  }
+
+  /* Layer 2: Name match — check if BBG name contains or is contained by any operator stock name */
+  if (bbgName) {
+    const nameLower = bbgName.toLowerCase().trim();
+    /* Exact name match first */
+    if (byName[nameLower]) {
+      const matches = byName[nameLower];
+      const ticker = matches[0].ticker;
+      const opIds = [...new Set(matches.map(m => m.opId))];
+      return { ticker, opIds };
+    }
+    /* Substring match: check if either name contains the other (min 6 chars to avoid false positives) */
+    for (const [stockName, matches] of Object.entries(byName)) {
+      if (stockName.length >= 6 && nameLower.length >= 6) {
+        if (nameLower.includes(stockName) || stockName.includes(nameLower)) {
+          const ticker = matches[0].ticker;
+          const opIds = [...new Set(matches.map(m => m.opId))];
+          return { ticker, opIds };
+        }
+      }
+      /* Also try first significant word match (e.g. "Norwegian" → "Norwegian Air Shuttle") */
+      const bbgFirst = nameLower.split(/[\s,]+/)[0];
+      const stockFirst = stockName.split(/[\s,]+/)[0];
+      if (bbgFirst.length >= 5 && bbgFirst === stockFirst) {
+        const ticker = matches[0].ticker;
+        const opIds = [...new Set(matches.map(m => m.opId))];
+        return { ticker, opIds };
+      }
+    }
+  }
+
+  return null;
 }
 
 function DataView({operators, globalDrivers, snapData, setSnapData}) {
@@ -862,7 +834,20 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
       try {
         const wb = XLSX.read(e.target.result, {type:'array'});
         /* Try Upload, Universe, or first sheet */
-        const sheetName = ['Upload','Universe','MSCI World','MSCI China','Sheet1'].find(n => wb.SheetNames.includes(n)) || wb.SheetNames[0];
+        /* Pick sheet with most data — try known names first, compare row counts */
+        const SHEET_CANDIDATES = ['Universe','Upload','MSCI World','MSCI China','Sheet1'];
+        let sheetName = wb.SheetNames[0];
+        let bestRows = 0;
+        const trySheets = SHEET_CANDIDATES.filter(n => wb.SheetNames.includes(n));
+        if (!trySheets.length) trySheets.push(wb.SheetNames[0]);
+        trySheets.forEach(n => {
+          const ref = wb.Sheets[n]['!ref'];
+          if (ref) {
+            const lastRow = parseInt(ref.split(':')[1]?.replace(/[A-Z]/g,'') || '0');
+            if (lastRow > bestRows) { bestRows = lastRow; sheetName = n; }
+          }
+        });
+        console.log(`[XA Data Hub] Using sheet "${sheetName}" (${bestRows} rows). Available: ${wb.SheetNames.join(', ')}`);
         const ws = wb.Sheets[sheetName];
 
         /* Find header row: scan for row containing any known ticker column name */
@@ -932,22 +917,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         if (!raw.length) { setError('No data rows found — check sheet has data with a ticker column (BBG Ticker, ticker, etc)'); setParsing(false); return; }
 
         /* Parse and normalise */
-        const tickerMap = buildTickerMap(operators);
-
-        /* Build base ticker index: "NAS.OL" → baseTicker "NAS", "0700.HK" → "700" etc */
-        const baseIndex = {};
-        operators.forEach(op => {
-          op.stocks.forEach(s => {
-            const base = s.ticker.replace(/\.[A-Z]+$/i,'').replace(/^0+/,'').toUpperCase();
-            if (!baseIndex[base]) baseIndex[base] = [];
-            baseIndex[base].push({ opId: op.id, ticker: s.ticker });
-          });
-        });
-
-        /* Extract base from BBG ticker: "NAS NO Equity" → "NAS", "0700 HK Equity" → "700" */
-        function bbgBase(t) {
-          return t.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').split(/\s+/)[0].replace(/^0+/,'').toUpperCase();
-        }
+        const indices = buildMatchIndices(operators);
 
         const parsed = raw
           .filter(r => r.bbg_ticker)
@@ -955,9 +925,10 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
             const bbg = (r.bbg_ticker || '').toString().trim();
             const price = parseFloat(r.price || 0);
             const mktCap = parseFloat(r.mkt_cap_m || 0);
+            const rowName = (r.name || '').toString().trim();
             const row = {
               bbg_ticker: bbg,
-              name: (r.name || '').toString().trim(),
+              name: rowName,
               country: (r.country || '').toString().trim(),
               gics_sector: (r.gics_sector || '').toString().trim(),
               gics_industry: (r.gics_industry || '').toString().trim(),
@@ -980,52 +951,17 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
               div_yield_pct: parseFloat(r.div_yield_pct || 0),
             };
 
-            /* === 3-LAYER TICKER MATCHING === */
-            let directMatch = null;
-
-            /* Layer 1: Forward map (normalised exchange codes) */
-            const normBbg = normTicker(bbg);
-            directMatch = tickerMap[normBbg] || null;
-
-            /* Layer 2: Reverse BBG→XA conversion */
-            if (!directMatch) {
-              const xaCandidates = bbgToXA(bbg);
-              for (const candidate of xaCandidates) {
-                const upper = candidate.toUpperCase();
-                for (const op of operators) {
-                  const found = op.stocks.find(s => s.ticker.toUpperCase() === upper);
-                  if (found) { directMatch = { opId: op.id, ticker: found.ticker }; break; }
-                }
-                if (directMatch) break;
-              }
+            /* Match: strip ticker first, then name fallback */
+            const match = matchToOperators(bbg, rowName, operators, indices);
+            if (match) {
+              row.matched_ops = match.opIds;
+              row.matched_ticker = match.ticker;
+              row.is_direct_match = true;
+            } else {
+              row.matched_ops = matchOperators(row);
+              row.matched_ticker = null;
+              row.is_direct_match = false;
             }
-
-            /* Layer 3: Base ticker match (NAS NO Equity → NAS → NAS.OL) */
-            if (!directMatch) {
-              const base = bbgBase(bbg);
-              const candidates = baseIndex[base];
-              if (candidates && candidates.length === 1) {
-                directMatch = candidates[0]; /* Unique match */
-              } else if (candidates && candidates.length > 1) {
-                /* Multiple XA stocks share base ticker — disambiguate by country/exchange */
-                const exchPart = bbg.replace(/\s+(Equity|Index)$/i,'').split(/\s+/)[1] || '';
-                const xaSuffix = (BBG_TO_XA[exchPart.toUpperCase()] || [''])[0];
-                const refined = candidates.find(c => c.ticker.toUpperCase().endsWith(xaSuffix.toUpperCase()));
-                if (refined) directMatch = refined;
-                else directMatch = candidates[0]; /* Best guess */
-              }
-            }
-
-            /* Find ALL operators this stock appears in */
-            let matchedOps = [];
-            if (directMatch) {
-              const matchTicker = directMatch.ticker.toUpperCase();
-              matchedOps = operators.filter(op => op.stocks.some(s => s.ticker.toUpperCase() === matchTicker)).map(op => op.id);
-              if (!matchedOps.length) matchedOps = [directMatch.opId];
-            }
-            row.matched_ops = matchedOps.length ? matchedOps : matchOperators(row);
-            row.matched_ticker = directMatch?.ticker || null;
-            row.is_direct_match = !!directMatch;
 
             return row;
           })
@@ -1049,8 +985,17 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         const unmatched = allOpStocks.filter(s => !priceMap[s.ticker]);
 
         /* Debug: log matching stats to console */
-        console.log(`[XA Data Hub] Parsed: ${parsed.length}, Filtered: ${filtered.length}, Price matches: ${priceUpdates}/${allOpStocks.length}`);
-        if (unmatched.length) console.log('[XA Data Hub] Unmatched:', unmatched.map(s => s.ticker).join(', '));
+        console.log(`[XA Data Hub] Sheet: "${sheetName}", Parsed: ${parsed.length}, Filtered: ${filtered.length}, Price matches: ${priceUpdates}/${allOpStocks.length}`);
+        if (unmatched.length) {
+          console.log('[XA Data Hub] Unmatched XA tickers:', unmatched.map(s => `${s.ticker} (stripped: ${stripTicker(s.ticker)})`).join(', '));
+          /* Show what BBG tickers are in the upload for comparison */
+          const bbgStripped = new Set(filtered.map(r => stripTicker(r.bbg_ticker)));
+          unmatched.forEach(s => {
+            const st = stripTicker(s.ticker);
+            const inUpload = bbgStripped.has(st);
+            console.log(`  ${s.ticker} → "${st}" ${inUpload ? '✓ FOUND in upload (bug!)' : '✗ not in upload'}`);
+          });
+        }
 
         const snapDate = new Date().toISOString().slice(0,10);
         const newSnap = {

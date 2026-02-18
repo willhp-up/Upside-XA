@@ -741,31 +741,10 @@ function stripTicker(t) {
     .trim();
 }
 
-/* Build lookup indices from operator stocks */
-function buildMatchIndices(operators) {
-  const byTicker = {};  /* stripped ticker → [{opId, ticker, name}] */
-  const byName = {};    /* lowercase name fragment → [{opId, ticker, name}] */
-
-  operators.forEach(op => {
-    op.stocks.forEach(s => {
-      const stripped = stripTicker(s.ticker);
-      if (!byTicker[stripped]) byTicker[stripped] = [];
-      byTicker[stripped].push({ opId: op.id, ticker: s.ticker, name: s.name });
-
-      /* Index by name words (3+ chars) for fuzzy matching */
-      const nameLower = s.name.toLowerCase();
-      byName[nameLower] = byName[nameLower] || [];
-      byName[nameLower].push({ opId: op.id, ticker: s.ticker, name: s.name });
-    });
-  });
-
-  return { byTicker, byName };
-}
-
 /* Match a BBG row to operator stocks. Returns {ticker, opIds} or null */
-function matchToOperators(bbgTicker, bbgName, operators, indices) {
-  const { byTicker, byName } = indices;
+function matchToOperators(bbgTicker, bbgName, operators) {
   const stripped = stripTicker(bbgTicker);
+  const nameLower = (bbgName || '').toLowerCase().trim();
 
   /* Layer 0: Hardcoded aliases (Singapore SGX codes etc) */
   if (stripped && TICKER_ALIASES[stripped]) {
@@ -774,40 +753,37 @@ function matchToOperators(bbgTicker, bbgName, operators, indices) {
     if (opIds.length) return { ticker: xaTicker, opIds };
   }
 
-  /* Layer 1: Strip BBG ticker → look up */
-  if (stripped && byTicker[stripped]) {
-    const matches = byTicker[stripped];
-    const ticker = matches[0].ticker;
-    const opIds = [...new Set(matches.map(m => m.opId))];
-    return { ticker, opIds };
+  /* Layer 1: Stripped ticker match — scan all operator stocks */
+  for (const op of operators) {
+    for (const s of op.stocks) {
+      if (stripped && stripTicker(s.ticker) === stripped) {
+        /* Found — collect ALL operators that have this ticker */
+        const xaTicker = s.ticker;
+        const opIds = operators.filter(o => o.stocks.some(st => st.ticker === xaTicker)).map(o => o.id);
+        return { ticker: xaTicker, opIds };
+      }
+    }
   }
 
-  /* Layer 2: Name match — check if BBG name contains or is contained by any operator stock name */
-  if (bbgName) {
-    const nameLower = bbgName.toLowerCase().trim();
-    /* Exact name match first */
-    if (byName[nameLower]) {
-      const matches = byName[nameLower];
-      const ticker = matches[0].ticker;
-      const opIds = [...new Set(matches.map(m => m.opId))];
-      return { ticker, opIds };
-    }
-    /* Substring match: check if either name contains the other (min 6 chars to avoid false positives) */
-    for (const [stockName, matches] of Object.entries(byName)) {
-      if (stockName.length >= 6 && nameLower.length >= 6) {
-        if (nameLower.includes(stockName) || stockName.includes(nameLower)) {
-          const ticker = matches[0].ticker;
-          const opIds = [...new Set(matches.map(m => m.opId))];
-          return { ticker, opIds };
+  /* Layer 2: Name match — scan all operator stocks */
+  if (nameLower.length >= 4) {
+    for (const op of operators) {
+      for (const s of op.stocks) {
+        const stockName = s.name.toLowerCase();
+        /* Substring match (either direction) */
+        if (stockName.length >= 4 && (nameLower.includes(stockName) || stockName.includes(nameLower))) {
+          const xaTicker = s.ticker;
+          const opIds = operators.filter(o => o.stocks.some(st => st.ticker === xaTicker)).map(o => o.id);
+          return { ticker: xaTicker, opIds };
         }
-      }
-      /* Also try first significant word match (e.g. "Norwegian" → "Norwegian Air Shuttle") */
-      const bbgFirst = nameLower.split(/[\s,]+/)[0];
-      const stockFirst = stockName.split(/[\s,]+/)[0];
-      if (bbgFirst.length >= 5 && bbgFirst === stockFirst) {
-        const ticker = matches[0].ticker;
-        const opIds = [...new Set(matches.map(m => m.opId))];
-        return { ticker, opIds };
+        /* First word match (min 5 chars) */
+        const bbgFirst = nameLower.split(/[\s,]+/)[0];
+        const stockFirst = stockName.split(/[\s,]+/)[0];
+        if (bbgFirst.length >= 5 && bbgFirst === stockFirst) {
+          const xaTicker = s.ticker;
+          const opIds = operators.filter(o => o.stocks.some(st => st.ticker === xaTicker)).map(o => o.id);
+          return { ticker: xaTicker, opIds };
+        }
       }
     }
   }
@@ -916,9 +892,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
 
         if (!raw.length) { setError('No data rows found — check sheet has data with a ticker column (BBG Ticker, ticker, etc)'); setParsing(false); return; }
 
-        /* Parse and normalise */
-        const indices = buildMatchIndices(operators);
-
+        /* Parse and normalise — brute force match against all 132 operator stocks */
         const parsed = raw
           .filter(r => r.bbg_ticker)
           .map(r => {
@@ -952,7 +926,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
             };
 
             /* Match: strip ticker first, then name fallback */
-            const match = matchToOperators(bbg, rowName, operators, indices);
+            const match = matchToOperators(bbg, rowName, operators);
             if (match) {
               row.matched_ops = match.opIds;
               row.matched_ticker = match.ticker;
@@ -980,6 +954,11 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           }
         });
 
+        /* Debug: log a sample of price mappings */
+        const priceEntries = Object.entries(priceMap);
+        console.log(`[XA Data Hub] priceMap has ${priceEntries.length} entries. Sample:`,
+          priceEntries.slice(0, 10).map(([k,v]) => `${k}=${v}`).join(', '));
+
         /* Track unmatched operator stocks */
         const allOpStocks = operators.flatMap(op => op.stocks.map(s => ({ticker: s.ticker, name: s.name, opName: op.name})));
         const unmatched = allOpStocks.filter(s => !priceMap[s.ticker]);
@@ -987,14 +966,16 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         /* Debug: log matching stats to console */
         console.log(`[XA Data Hub] Sheet: "${sheetName}", Parsed: ${parsed.length}, Filtered: ${filtered.length}, Price matches: ${priceUpdates}/${allOpStocks.length}`);
         if (unmatched.length) {
-          console.log('[XA Data Hub] Unmatched XA tickers:', unmatched.map(s => `${s.ticker} (stripped: ${stripTicker(s.ticker)})`).join(', '));
-          /* Show what BBG tickers are in the upload for comparison */
-          const bbgStripped = new Set(filtered.map(r => stripTicker(r.bbg_ticker)));
+          console.log(`[XA Data Hub] ${unmatched.length} unmatched XA tickers:`);
+          const uploadStripped = {};
+          filtered.forEach(r => { uploadStripped[stripTicker(r.bbg_ticker)] = r.bbg_ticker; });
           unmatched.forEach(s => {
             const st = stripTicker(s.ticker);
-            const inUpload = bbgStripped.has(st);
-            console.log(`  ${s.ticker} → "${st}" ${inUpload ? '✓ FOUND in upload (bug!)' : '✗ not in upload'}`);
+            const inUpload = uploadStripped[st];
+            console.log(`  ${s.ticker} → strip="${st}" | ${inUpload ? '⚠ FOUND as "'+inUpload+'" (matching bug!)' : '✗ not in upload'} | ${s.opName}: ${s.name}`);
           });
+        } else {
+          console.log('[XA Data Hub] ✓ All 132 operator stocks matched!');
         }
 
         const snapDate = new Date().toISOString().slice(0,10);
@@ -1010,7 +991,14 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         };
 
         setSnapData(newSnap);
-        LS.set('xa_snap_v3', newSnap);
+        try {
+          LS.set('xa_snap_v3', newSnap);
+          console.log('[XA Data Hub] Snap saved to localStorage OK');
+        } catch(e) {
+          console.warn('[XA Data Hub] localStorage save failed (data too large?) — snap is in memory only:', e.message);
+          /* Save a slim version without the full universe */
+          try { LS.set('xa_snap_v3', {...newSnap, universe: []}); } catch(e2) {}
+        }
         setParsing(false);
       } catch(err) {
         setError('Parse error: ' + err.message);
@@ -1269,12 +1257,17 @@ function App() {
 
   /* Apply snap prices to operator stocks */
   const liveOperators = useMemo(() => {
-    if (!snapData?.priceMap) return OPERATORS;
+    if (!snapData?.priceMap) {
+      console.log('[XA liveOps] No priceMap — using hardcoded prices');
+      return OPERATORS;
+    }
+    const pmSize = Object.keys(snapData.priceMap).length;
+    console.log(`[XA liveOps] Overlaying ${pmSize} prices. IHG.L=${snapData.priceMap['IHG.L']}, NAS.OL=${snapData.priceMap['NAS.OL']}`);
     return OPERATORS.map(op => ({
       ...op,
       stocks: op.stocks.map(s => ({
         ...s,
-        currentPrice: snapData.priceMap[s.ticker] || s.currentPrice,
+        currentPrice: snapData.priceMap[s.ticker] != null ? snapData.priceMap[s.ticker] : s.currentPrice,
       }))
     }));
   }, [snapData]);

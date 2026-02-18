@@ -1200,7 +1200,8 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         /* Debug: log a sample of price mappings */
         const priceEntries = Object.entries(priceMap);
         console.log(`[XA Data Hub] priceMap has ${priceEntries.length} entries (built from ALL ${parsed.length} rows, not just filtered ${filtered.length}).`);
-        console.log(`[XA Data Hub] Sample:`, priceEntries.slice(0, 10).map(([k,v]) => `${k}=${v}`).join(', '));
+        console.log(`[XA Data Hub] NAS.OL in priceMap? → ${priceMap['NAS.OL']} (should be ~17 if upload has it)`);
+        console.log(`[XA Data Hub] All priceMap keys:`, Object.keys(priceMap).sort().join(', '));
         /* Flag small-cap operator stocks that would have been missed by $1bn filter */
         const smallCapHits = parsed.filter(r => r.is_direct_match && r.matched_ticker && r.mkt_cap_m > 0 && r.mkt_cap_m < 1000);
         if (smallCapHits.length) console.log(`[XA Data Hub] ⚠ ${smallCapHits.length} operator stocks under $1bn got prices (would have been missed by old filter):`, smallCapHits.map(r => `${r.matched_ticker}=$${r.price} (mktcap ${r.mkt_cap_m}M)`).join(', '));
@@ -1596,15 +1597,27 @@ function App() {
       console.log('[XA liveOps] No priceMap — using hardcoded prices');
       return OPERATORS;
     }
-    const pmSize = Object.keys(snapData.priceMap).length;
-    console.log(`[XA liveOps] Overlaying ${pmSize} prices. IHG.L=${snapData.priceMap['IHG.L']}, NAS.OL=${snapData.priceMap['NAS.OL']}`);
-    return OPERATORS.map(op => ({
+    const pm = snapData.priceMap;
+    const pmKeys = Object.keys(pm);
+    console.log(`[XA liveOps] priceMap has ${pmKeys.length} keys`);
+    console.log(`[XA liveOps] NAS.OL in priceMap? ${pm['NAS.OL'] !== undefined} → value: ${pm['NAS.OL']}`);
+    console.log(`[XA liveOps] IHG.L in priceMap? ${pm['IHG.L'] !== undefined} → value: ${pm['IHG.L']}`);
+    /* Show all priceMap keys that contain NAS */
+    const nasKeys = pmKeys.filter(k => k.toUpperCase().includes('NAS'));
+    console.log(`[XA liveOps] Keys containing NAS:`, nasKeys.map(k => `${k}=${pm[k]}`));
+
+    const result = OPERATORS.map(op => ({
       ...op,
-      stocks: op.stocks.map(s => ({
-        ...s,
-        currentPrice: snapData.priceMap[s.ticker] != null ? snapData.priceMap[s.ticker] : s.currentPrice,
-      }))
+      stocks: op.stocks.map(s => {
+        const snapPrice = pm[s.ticker];
+        const finalPrice = snapPrice != null ? snapPrice : s.currentPrice;
+        if (s.ticker === 'NAS.OL') {
+          console.log(`[XA liveOps] NAS.OL: hardcoded=${s.currentPrice}, snapPrice=${snapPrice}, final=${finalPrice}`);
+        }
+        return { ...s, currentPrice: finalPrice };
+      })
     }));
+    return result;
   }, [snapData]);
 
   const handleReset = () => {

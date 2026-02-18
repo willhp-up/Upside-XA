@@ -748,6 +748,50 @@ function normTicker(t) {
   return s;
 }
 
+/* Reverse map: BBG exchange code → XA ticker suffix */
+const BBG_TO_XA = {
+  'US':['',''], 'UW':['',''], 'UN':['',''], 'UP':['',''], 'UA':['',''], 'UQ':['',''],
+  'CN':['','.TO'], 'CT':['','.TO'],
+  'LN':['.L'], 'LS':['.L'], 'LI':['.L'],
+  'GR':['.DE'], 'GY':['.DE'], 'GF':['.DE'],
+  'FP':['.PA'], 'PA':['.PA'], 'EN':['.PA'],
+  'IM':['.MI'], 'MI':['.MI'],
+  'SM':['.MC'], 'MC':['.MC'], 'SQ':['.MC'],
+  'NA':['.AS'], 'AS':['.AS'],
+  'NO':['.OL'], 'OL':['.OL'],
+  'SW':['.SW'], 'SE':['.SW'], 'VX':['.SW'],
+  'TI':['.IS'], 'IS':['.IS'],
+  'DC':['.CO'], 'CO':['.CO'],
+  'ID':['.JK'],
+  'JP':['.T'], 'JT':['.T'],
+  'HK':['.HK'],
+  'TT':['.TW'],
+  'KS':['.KS'], 'KP':['.KS'],
+  'SP':['.SI'],
+  'AU':['.AX'], 'AT':['.AX'], 'AX':['.AX'],
+  'CH':['.SZ','.SH'],
+  'BB':['.BK'],
+};
+
+/* Convert BBG ticker to all possible XA ticker formats */
+function bbgToXA(bbg) {
+  const clean = bbg.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').trim();
+  const parts = clean.split(/\s+/);
+  if (parts.length !== 2) return [clean, clean.toUpperCase()]; /* No exchange code, try as-is */
+  const [sym, exch] = parts;
+  const suffixes = BBG_TO_XA[exch.toUpperCase()] || [''];
+  const results = [];
+  suffixes.forEach(sfx => {
+    results.push(sym + sfx);
+    if (exch.toUpperCase() === 'HK') {
+      /* HK tickers: try with and without leading zeros (0700.HK vs 700.HK) */
+      results.push(sym.padStart(4,'0') + sfx);
+      results.push(sym.replace(/^0+/,'') + sfx);
+    }
+  });
+  return results;
+}
+
 /* Build a lookup map from BBG tickers to XA operator tickers */
 /* Includes explicit aliases for Singapore and other non-standard mappings */
 const BBG_ALIASES = {
@@ -920,10 +964,31 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
               div_yield_pct: parseFloat(r.div_yield_pct || 0),
             };
 
-            /* Match to operators */
+            /* Match to operators — try forward map first, then reverse BBG→XA conversion */
             const normBbg = normTicker(bbg);
-            const directMatch = tickerMap[normBbg];
-            row.matched_ops = directMatch ? [directMatch.opId] : matchOperators(row);
+            let directMatch = tickerMap[normBbg];
+
+            /* Reverse fallback: convert BBG ticker to XA format and check stock list */
+            if (!directMatch) {
+              const xaCandidates = bbgToXA(bbg);
+              for (const candidate of xaCandidates) {
+                const upper = candidate.toUpperCase();
+                for (const op of operators) {
+                  const found = op.stocks.find(s => s.ticker.toUpperCase() === upper);
+                  if (found) { directMatch = { opId: op.id, ticker: found.ticker }; break; }
+                }
+                if (directMatch) break;
+              }
+            }
+
+            /* Find ALL operators this stock appears in */
+            let matchedOps = [];
+            if (directMatch) {
+              const matchTicker = directMatch.ticker.toUpperCase();
+              matchedOps = operators.filter(op => op.stocks.some(s => s.ticker.toUpperCase() === matchTicker)).map(op => op.id);
+              if (!matchedOps.length) matchedOps = [directMatch.opId];
+            }
+            row.matched_ops = matchedOps.length ? matchedOps : matchOperators(row);
             row.matched_ticker = directMatch?.ticker || null;
             row.is_direct_match = !!directMatch;
 

@@ -23,28 +23,32 @@ input,textarea,select{font-family:inherit}input:focus,textarea:focus,select:focu
 </head>
 <body>
 <div id="root"></div>
+<script>
+/* ═══════════════ GLOBAL PRICE MAP — runs in regular script, truly global ═══════════════ */
+window.XA_PRICES = {};
+window.livePrice = function(ticker, hardcoded) {
+  var p = window.XA_PRICES[ticker];
+  return p != null ? p : hardcoded;
+};
+/* Load from localStorage on page load */
+try {
+  var saved = JSON.parse(localStorage.getItem('xa_snap_v3'));
+  if (saved && saved.priceMap) {
+    window.XA_PRICES = saved.priceMap;
+    console.log('[XA boot] Loaded ' + Object.keys(saved.priceMap).length + ' prices. NAS.OL=' + saved.priceMap['NAS.OL']);
+  } else {
+    console.log('[XA boot] No saved priceMap in localStorage');
+  }
+} catch(e) {
+  console.log('[XA boot] localStorage parse error:', e);
+}
+</script>
 <script type="text/babel">
 const{useState,useMemo,useCallback,useEffect,useRef}=React;
 
 /* ═══════════════ STORAGE ═══════════════ */
 const LS={get(k){try{return JSON.parse(localStorage.getItem(k))}catch{return null}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
 function download(content,filename,mime='text/csv'){const b=new Blob([content],{type:mime});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u)}
-
-/* ═══════════════ GLOBAL PRICE MAP — bypasses React state entirely ═══════════════ */
-window.XA_PRICES = {};
-(function() {
-  const saved = LS.get('xa_snap_v3');
-  if (saved?.priceMap) {
-    window.XA_PRICES = saved.priceMap;
-    console.log('[XA boot] Loaded', Object.keys(saved.priceMap).length, 'prices from localStorage. NAS.OL=', saved.priceMap['NAS.OL']);
-  }
-})();
-
-/* Helper: get live price for any ticker — reads from global map, falls back to hardcoded */
-function livePrice(ticker, hardcoded) {
-  const p = window.XA_PRICES[ticker];
-  return p != null ? p : hardcoded;
-}
 
 /* ═══════════════ SCENARIO ENGINE ═══════════════ */
 const SCENARIOS=[
@@ -438,32 +442,6 @@ const OPERATORS = [
     ]
   },
 ];
-
-/* ═══════════════ SNAP PRICE OVERLAY (direct mutation) ═══════════════ */
-function applySnapPrices(priceMap) {
-  if (!priceMap) return 0;
-  let count = 0;
-  OPERATORS.forEach(op => {
-    op.stocks.forEach(s => {
-      if (priceMap[s.ticker] != null) {
-        s.currentPrice = priceMap[s.ticker];
-        count++;
-      }
-    });
-  });
-  console.log(`[XA applySnapPrices] Updated ${count} stock prices directly on OPERATORS`);
-  return count;
-}
-
-/* Apply saved snap on page load — before React renders anything */
-(function() {
-  const saved = LS.get('xa_snap_v3');
-  if (saved?.priceMap) {
-    const n = applySnapPrices(saved.priceMap);
-    const nas = OPERATORS.find(o => o.id === 'tig')?.stocks.find(s => s.ticker === 'NAS.OL');
-    console.log(`[XA boot] Applied ${n} snap prices from localStorage. NAS.OL=${nas?.currentPrice}`);
-  }
-})();
 
 /* ═══════════════ COMPUTE OPERATOR STATS ═══════════════ */
 function computeOpStats(op, globalDrivers) {
@@ -1645,8 +1623,10 @@ function App() {
 
   /* Called by DataView after snap upload — updates global prices and forces re-render */
   const onSnapUploaded = useCallback((newSnap) => {
-    if (newSnap?.priceMap) window.XA_PRICES = newSnap.priceMap;
-    applySnapPrices(newSnap?.priceMap);
+    if (newSnap?.priceMap) {
+      window.XA_PRICES = newSnap.priceMap;
+      console.log('[XA onSnap] window.XA_PRICES set with', Object.keys(newSnap.priceMap).length, 'prices. NAS.OL=', newSnap.priceMap['NAS.OL']);
+    }
     setSnapData(newSnap);
     setRenderKey(k => k + 1);
   }, []);

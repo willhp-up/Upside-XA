@@ -30,6 +30,22 @@ const{useState,useMemo,useCallback,useEffect,useRef}=React;
 const LS={get(k){try{return JSON.parse(localStorage.getItem(k))}catch{return null}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
 function download(content,filename,mime='text/csv'){const b=new Blob([content],{type:mime});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u)}
 
+/* ═══════════════ GLOBAL PRICE MAP — bypasses React state entirely ═══════════════ */
+window.XA_PRICES = {};
+(function() {
+  const saved = LS.get('xa_snap_v3');
+  if (saved?.priceMap) {
+    window.XA_PRICES = saved.priceMap;
+    console.log('[XA boot] Loaded', Object.keys(saved.priceMap).length, 'prices from localStorage. NAS.OL=', saved.priceMap['NAS.OL']);
+  }
+})();
+
+/* Helper: get live price for any ticker — reads from global map, falls back to hardcoded */
+function livePrice(ticker, hardcoded) {
+  const p = window.XA_PRICES[ticker];
+  return p != null ? p : hardcoded;
+}
+
 /* ═══════════════ SCENARIO ENGINE ═══════════════ */
 const SCENARIOS=[
   {id:"db",label:"Deep Bear",color:"#ef4444",bp:5},
@@ -59,7 +75,7 @@ function runEngine(stock,driverMap,globalDrivers){
   const tot=sp.reduce((s,p)=>s+p,0);
   const pr=sp.map(p=>(p/tot)*100);
   const ev=pr.reduce((s,p,i)=>s+(p/100)*stock.prices[i],0);
-  const c=stock.currentPrice||stock.prices[3];
+  const c=livePrice(stock.ticker, stock.currentPrice)||stock.prices[3];
   const rr=c>0?((ev-c)/c)*100:0;
   const buw=pr.slice(4).reduce((s,p,i)=>s+p*Math.abs(stock.prices[i+4]-ev),0);
   const bew=pr.slice(0,3).reduce((s,p,i)=>s+p*Math.abs(stock.prices[i]-ev),0);
@@ -72,7 +88,7 @@ function runEngine(stock,driverMap,globalDrivers){
   let tier="Watchlist";
   if(Math.abs(rr)>15)tier="Core";
   else if(Math.abs(rr)>8)tier="Satellite";
-  return{pr,ev,rr,skew,vd,tier};
+  return{pr,ev,rr,skew,vd,tier,c};
 }
 
 const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;if(t==='price'){if(Math.abs(v)>=10000)return v.toLocaleString('en',{maximumFractionDigits:0});if(Math.abs(v)>=100)return v.toFixed(1);return v.toFixed(2)}return`${v.toFixed(1)}`};
@@ -657,6 +673,7 @@ function ScenarioBarPA({probs, prices, currentPrice}) {
 
 /* Pan Asian style: stock row with horizontal bar */
 function StockRowPA({stock, eng, rank}) {
+  const cp = livePrice(stock.ticker, stock.currentPrice);
   const isLong = stock.verdict === 'long';
   const vc = eng.rr>15?'var(--g)':eng.rr>5?'#22c55e':eng.rr<-5?'var(--r)':'var(--fg3)';
   return <div style={{
@@ -673,11 +690,11 @@ function StockRowPA({stock, eng, rank}) {
       <div style={{display:'flex',alignItems:'center',gap:16}}>
         <div style={{textAlign:'right'}}>
           <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>NOW</div>
-          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700}}>{fmt(stock.currentPrice,'price')}</div>
+          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700}}>{fmt(cp,'price')}</div>
         </div>
         <div style={{textAlign:'right'}}>
           <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>EV</div>
-          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:eng.ev>stock.currentPrice?'var(--g)':'var(--r)'}}>{fmt(eng.ev,'price')}</div>
+          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:eng.ev>cp?'var(--g)':'var(--r)'}}>{fmt(eng.ev,'price')}</div>
         </div>
         <div style={{textAlign:'right'}}>
           <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>R/R</div>
@@ -690,18 +707,19 @@ function StockRowPA({stock, eng, rank}) {
         <Badge color={vc} style={{minWidth:80,justifyContent:'center'}}>{eng.vd}</Badge>
       </div>
     </div>
-    <ScenarioBarPA probs={eng.pr} prices={stock.prices} currentPrice={stock.currentPrice} />
+    <ScenarioBarPA probs={eng.pr} prices={stock.prices} currentPrice={cp} />
   </div>;
 }
 
 /* GRS style: compact card with vertical probability bars */
 function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
+  const cp = livePrice(stock.ticker, stock.currentPrice);
   const mx = Math.max(...eng.pr);
   const isLong = stock.verdict === 'long';
   const vc = eng.vd.includes('LONG')?'var(--g)':eng.vd.includes('SHORT')?'var(--r)':'var(--fg3)';
   const tc = eng.tier==='Core'?'var(--y)':eng.tier==='Satellite'?'var(--b)':'var(--fg4)';
-  const mdd = ((Math.min(...stock.prices)-stock.currentPrice)/stock.currentPrice*100);
-  const mxu = ((Math.max(...stock.prices)-stock.currentPrice)/stock.currentPrice*100);
+  const mdd = ((Math.min(...stock.prices)-cp)/cp*100);
+  const mxu = ((Math.max(...stock.prices)-cp)/cp*100);
 
   return <div style={{background:'var(--bg1)',borderRadius:10,border:'1px solid var(--border)',borderLeft:`3px solid ${isLong?'var(--g)':'var(--r)'}`,overflow:'hidden',marginBottom:6}}>
     <div onClick={toggle} style={{padding:'12px 14px',cursor:'pointer',display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
@@ -721,7 +739,7 @@ function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
         </div>
       </div>
       <div style={{minWidth:115,textAlign:'right'}}>
-        <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)'}}>Now: {fmt(stock.currentPrice,'price')}</div>
+        <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)'}}>Now: {fmt(cp,'price')}</div>
         <div style={{fontSize:15,fontFamily:'var(--mono)',fontWeight:700,color:'#6366f1'}}>EV: {fmt(eng.ev,'price')}</div>
         <div style={{fontSize:12,fontFamily:'var(--mono)',color:eng.rr>0?'var(--g)':'var(--r)',fontWeight:700}}>{fmt(eng.rr,'pct')}</div>
       </div>
@@ -739,7 +757,7 @@ function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
           <div style={{fontSize:13,fontFamily:'var(--mono)',color:'var(--fg)',fontWeight:700}}>{fmt(stock.prices[i],'price')}</div>
           <div style={{fontSize:10,fontFamily:'var(--mono)',color:s.color,marginTop:2}}>{eng.pr[i].toFixed(1)}%</div>
           <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:2}}>
-            {(((stock.prices[i]-stock.currentPrice)/stock.currentPrice)*100).toFixed(0)}%
+            {(((stock.prices[i]-cp)/cp)*100).toFixed(0)}%
           </div>
         </div>)}
       </div>
@@ -1252,6 +1270,11 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         }
 
         const snapDate = new Date().toISOString().slice(0,10);
+
+        /* ═══ CRITICAL: Update global price map immediately ═══ */
+        window.XA_PRICES = priceMap;
+        console.log(`[XA Data Hub] window.XA_PRICES updated with ${Object.keys(priceMap).length} prices. NAS.OL=${priceMap['NAS.OL']}`);
+
         const newSnap = {
           date: snapDate,
           fileName: file.name,
@@ -1338,7 +1361,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
   const handleDragLeave = () => setDragOver(false);
   const handleClick = () => fileRef.current?.click();
   const handleFileInput = (e) => { if (e.target.files[0]) parseFile(e.target.files[0]); };
-  const clearSnap = () => { if(confirm('Clear universe data?')){ setSnapData(null); localStorage.removeItem('xa_snap_v3'); }};
+  const clearSnap = () => { if(confirm('Clear universe data?')){ window.XA_PRICES = {}; setSnapData(null); localStorage.removeItem('xa_snap_v3'); }};
 
   /* Coverage stats per operator */
   const opCoverage = useMemo(() => {
@@ -1461,7 +1484,8 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           const apiOps = operators.map(op => {
             const results = op.stocks.map(s => {
               const eng = runEngine(s, op.driverMap, globalDrivers);
-              return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:s.currentPrice,
+              const cp = livePrice(s.ticker, s.currentPrice);
+              return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:cp,
                 prices:s.prices, ev:eng?.ev?+eng.ev.toFixed(2):null, rr_pct:eng?.rr?+eng.rr.toFixed(2):null,
                 skew:eng?.skew?+eng.skew.toFixed(3):null, verdict:eng?.vd||null, tier:eng?.tier||null,
                 probabilities:eng?.pr?.map(p=>+p.toFixed(2))||[], sensitivity:s.sens||{} };
@@ -1573,7 +1597,8 @@ function ExportView({operators, globalDrivers}) {
       ops.forEach(op => {
         op.stocks.forEach(s => {
           const eng = runEngine(s, op.driverMap, globalDrivers);
-          csv += [s.ticker, s.name, s.verdict, op.name, op.team, s.currentPrice, eng?.ev?.toFixed(2)||'', eng?.rr?.toFixed(1)||'', eng?.skew?.toFixed(2)||'', eng?.vd||'', eng?.tier||'', ...(s.prices||[]).map(p=>p)].join(',') + '\n';
+          const cp = livePrice(s.ticker, s.currentPrice);
+          csv += [s.ticker, s.name, s.verdict, op.name, op.team, cp, eng?.ev?.toFixed(2)||'', eng?.rr?.toFixed(1)||'', eng?.skew?.toFixed(2)||'', eng?.vd||'', eng?.tier||'', ...(s.prices||[]).map(p=>p)].join(',') + '\n';
         });
       });
       download(csv, `xa_${scope}_${date}.csv`);
@@ -1618,9 +1643,10 @@ function App() {
 
   useEffect(() => { LS.set('xa_drivers_v2', globalDrivers); }, [globalDrivers]);
 
-  /* Called by DataView after snap upload — mutates OPERATORS and forces full re-render */
+  /* Called by DataView after snap upload — updates global prices and forces re-render */
   const onSnapUploaded = useCallback((newSnap) => {
-    applySnapPrices(newSnap.priceMap);
+    if (newSnap?.priceMap) window.XA_PRICES = newSnap.priceMap;
+    applySnapPrices(newSnap?.priceMap);
     setSnapData(newSnap);
     setRenderKey(k => k + 1);
   }, []);

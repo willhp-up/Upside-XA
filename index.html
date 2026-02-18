@@ -718,10 +718,34 @@ function matchOperators(row) {
   return matches;
 }
 
-/* Normalise ticker for matching (strip Equity/Index suffix, slashes, extra spaces, leading zeros) */
+/* Normalise ticker for matching — collapses BBG exchange codes to composite */
+const EXCH_MAP = {
+  'UW':'US','UN':'US','UP':'US','UA':'US','UQ':'US','UR':'US','UV':'US',
+  'LS':'LN','LI':'LN','CT':'CN',
+  'GY':'GR','GF':'GR',
+  'JT':'JP',
+  'KP':'KS',
+  'SI':'SP',
+  'AT':'AU',
+  'SE':'SW','VX':'SW',
+  'MI':'IM',
+  'PA':'FP','EN':'FP',
+  'MC':'SM','SQ':'SM',
+  'OL':'NO',
+  'AS':'NA',
+  'BB':'ID',
+  'IS':'TI',
+  'CO':'DC',
+};
 function normTicker(t) {
   if (!t) return '';
-  return t.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').replace(/\s+/g,' ').trim().toUpperCase();
+  let s = t.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').replace(/\s+/g,' ').trim().toUpperCase();
+  const parts = s.split(' ');
+  if (parts.length === 2 && EXCH_MAP[parts[1]]) {
+    parts[1] = EXCH_MAP[parts[1]];
+    s = parts.join(' ');
+  }
+  return s;
 }
 
 /* Build a lookup map from BBG tickers to XA operator tickers */
@@ -742,6 +766,7 @@ function buildTickerMap(operators) {
       const variants = [
         t.toUpperCase(),
         t.replace('.HK','').replace(/^0+/,'') + ' HK',
+        '0' + t.replace('.HK','').replace(/^0+/,'') + ' HK',  /* with leading zero */
         t.replace('.T','') + ' JP',
         t.replace('.TW','') + ' TT',
         t.replace('.KS','') + ' KS',
@@ -760,7 +785,10 @@ function buildTickerMap(operators) {
         t.replace('.IS','') + ' TI',
         t + ' US',
       ];
-      variants.forEach(v => { map[v.toUpperCase()] = { opId: op.id, ticker: t }; });
+      variants.forEach(v => {
+        const key = normTicker(v);
+        if (key) map[key] = { opId: op.id, ticker: t };
+      });
     });
   });
   /* Add explicit BBG aliases */
@@ -879,6 +907,10 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           }
         });
 
+        /* Track unmatched operator stocks */
+        const allOpStocks = operators.flatMap(op => op.stocks.map(s => ({ticker: s.ticker, name: s.name, opName: op.name})));
+        const unmatched = allOpStocks.filter(s => !priceMap[s.ticker]);
+
         const snapDate = new Date().toISOString().slice(0,10);
         const newSnap = {
           date: snapDate,
@@ -887,6 +919,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           totalFiltered: filtered.length,
           priceUpdates,
           priceMap,
+          unmatched,
           universe: filtered,
         };
 
@@ -1007,6 +1040,17 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
             </div>
           </div>;
         })}
+      </div>
+    </div>}
+
+    {/* Unmatched tickers — shows which operator stocks didn't get a price update */}
+    {snapData?.unmatched?.length > 0 && <div style={{background:'var(--bg1)',border:'1px solid rgba(255,61,113,.2)',borderRadius:8,padding:16,marginBottom:24}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'var(--r)'}}>⚠ Unmatched Operator Stocks ({snapData.unmatched.length})</span>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>These names kept their hardcoded prices — BBG ticker not found in upload</span>
+      </div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+        {snapData.unmatched.map((s,i) => <span key={i} style={{fontSize:9,fontFamily:'var(--mono)',padding:'2px 6px',borderRadius:3,background:'rgba(255,61,113,.08)',color:'var(--r)',border:'1px solid rgba(255,61,113,.15)'}} title={s.opName + ': ' + s.name}>{s.ticker}</span>)}
       </div>
     </div>}
 

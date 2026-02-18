@@ -933,6 +933,22 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
 
         /* Parse and normalise */
         const tickerMap = buildTickerMap(operators);
+
+        /* Build base ticker index: "NAS.OL" → baseTicker "NAS", "0700.HK" → "700" etc */
+        const baseIndex = {};
+        operators.forEach(op => {
+          op.stocks.forEach(s => {
+            const base = s.ticker.replace(/\.[A-Z]+$/i,'').replace(/^0+/,'').toUpperCase();
+            if (!baseIndex[base]) baseIndex[base] = [];
+            baseIndex[base].push({ opId: op.id, ticker: s.ticker });
+          });
+        });
+
+        /* Extract base from BBG ticker: "NAS NO Equity" → "NAS", "0700 HK Equity" → "700" */
+        function bbgBase(t) {
+          return t.replace(/\s+(Equity|Index)$/i,'').replace(/\//g,'').split(/\s+/)[0].replace(/^0+/,'').toUpperCase();
+        }
+
         const parsed = raw
           .filter(r => r.bbg_ticker)
           .map(r => {
@@ -964,11 +980,14 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
               div_yield_pct: parseFloat(r.div_yield_pct || 0),
             };
 
-            /* Match to operators — try forward map first, then reverse BBG→XA conversion */
-            const normBbg = normTicker(bbg);
-            let directMatch = tickerMap[normBbg];
+            /* === 3-LAYER TICKER MATCHING === */
+            let directMatch = null;
 
-            /* Reverse fallback: convert BBG ticker to XA format and check stock list */
+            /* Layer 1: Forward map (normalised exchange codes) */
+            const normBbg = normTicker(bbg);
+            directMatch = tickerMap[normBbg] || null;
+
+            /* Layer 2: Reverse BBG→XA conversion */
             if (!directMatch) {
               const xaCandidates = bbgToXA(bbg);
               for (const candidate of xaCandidates) {
@@ -978,6 +997,22 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
                   if (found) { directMatch = { opId: op.id, ticker: found.ticker }; break; }
                 }
                 if (directMatch) break;
+              }
+            }
+
+            /* Layer 3: Base ticker match (NAS NO Equity → NAS → NAS.OL) */
+            if (!directMatch) {
+              const base = bbgBase(bbg);
+              const candidates = baseIndex[base];
+              if (candidates && candidates.length === 1) {
+                directMatch = candidates[0]; /* Unique match */
+              } else if (candidates && candidates.length > 1) {
+                /* Multiple XA stocks share base ticker — disambiguate by country/exchange */
+                const exchPart = bbg.replace(/\s+(Equity|Index)$/i,'').split(/\s+/)[1] || '';
+                const xaSuffix = (BBG_TO_XA[exchPart.toUpperCase()] || [''])[0];
+                const refined = candidates.find(c => c.ticker.toUpperCase().endsWith(xaSuffix.toUpperCase()));
+                if (refined) directMatch = refined;
+                else directMatch = candidates[0]; /* Best guess */
               }
             }
 
@@ -1012,6 +1047,10 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         /* Track unmatched operator stocks */
         const allOpStocks = operators.flatMap(op => op.stocks.map(s => ({ticker: s.ticker, name: s.name, opName: op.name})));
         const unmatched = allOpStocks.filter(s => !priceMap[s.ticker]);
+
+        /* Debug: log matching stats to console */
+        console.log(`[XA Data Hub] Parsed: ${parsed.length}, Filtered: ${filtered.length}, Price matches: ${priceUpdates}/${allOpStocks.length}`);
+        if (unmatched.length) console.log('[XA Data Hub] Unmatched:', unmatched.map(s => s.ticker).join(', '));
 
         const snapDate = new Date().toISOString().slice(0,10);
         const newSnap = {

@@ -79,7 +79,7 @@ function runEngine(stock,driverMap,globalDrivers){
   const tot=sp.reduce((s,p)=>s+p,0);
   const pr=sp.map(p=>(p/tot)*100);
   const ev=pr.reduce((s,p,i)=>s+(p/100)*stock.prices[i],0);
-  const c=livePrice(stock.ticker, stock.currentPrice)||stock.prices[3];
+  const c=stock.currentPrice||stock.prices[3];
   const rr=c>0?((ev-c)/c)*100:0;
   const buw=pr.slice(4).reduce((s,p,i)=>s+p*Math.abs(stock.prices[i+4]-ev),0);
   const bew=pr.slice(0,3).reduce((s,p,i)=>s+p*Math.abs(stock.prices[i]-ev),0);
@@ -443,6 +443,23 @@ const OPERATORS = [
   },
 ];
 
+/* ═══ PATCH: Apply saved snap prices directly into OPERATORS before React renders ═══ */
+(function() {
+  const pm = window.XA_PRICES;
+  if (pm && typeof pm === 'object') {
+    let patched = 0;
+    OPERATORS.forEach(function(op) {
+      op.stocks.forEach(function(s) {
+        if (pm[s.ticker] != null) {
+          s.currentPrice = pm[s.ticker];
+          patched++;
+        }
+      });
+    });
+    if (patched > 0) console.log('[XA patch] Patched ' + patched + ' stock prices into OPERATORS from saved snap');
+  }
+})();
+
 /* ═══════════════ COMPUTE OPERATOR STATS ═══════════════ */
 function computeOpStats(op, globalDrivers) {
   const results = op.stocks.map(s => {
@@ -651,7 +668,7 @@ function ScenarioBarPA({probs, prices, currentPrice}) {
 
 /* Pan Asian style: stock row with horizontal bar */
 function StockRowPA({stock, eng, rank}) {
-  const cp = livePrice(stock.ticker, stock.currentPrice);
+  const cp = stock.currentPrice;
   const isLong = stock.verdict === 'long';
   const vc = eng.rr>15?'var(--g)':eng.rr>5?'#22c55e':eng.rr<-5?'var(--r)':'var(--fg3)';
   return <div style={{
@@ -691,7 +708,7 @@ function StockRowPA({stock, eng, rank}) {
 
 /* GRS style: compact card with vertical probability bars */
 function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
-  const cp = livePrice(stock.ticker, stock.currentPrice);
+  const cp = stock.currentPrice;
   const mx = Math.max(...eng.pr);
   const isLong = stock.verdict === 'long';
   const vc = eng.vd.includes('LONG')?'var(--g)':eng.vd.includes('SHORT')?'var(--r)':'var(--fg3)';
@@ -1249,9 +1266,18 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
 
         const snapDate = new Date().toISOString().slice(0,10);
 
-        /* ═══ CRITICAL: Update global price map immediately ═══ */
+        /* ═══ CRITICAL: Update global price map and mutate OPERATORS directly ═══ */
         window.XA_PRICES = priceMap;
-        console.log(`[XA Data Hub] window.XA_PRICES updated with ${Object.keys(priceMap).length} prices. NAS.OL=${priceMap['NAS.OL']}`);
+        let patchCount = 0;
+        OPERATORS.forEach(op => {
+          op.stocks.forEach(s => {
+            if (priceMap[s.ticker] != null) {
+              s.currentPrice = priceMap[s.ticker];
+              patchCount++;
+            }
+          });
+        });
+        console.log(`[XA Data Hub] Patched ${patchCount} prices directly into OPERATORS. NAS.OL=${OPERATORS.find(o=>o.id==='tig')?.stocks.find(s=>s.ticker==='NAS.OL')?.currentPrice}`);
 
         const newSnap = {
           date: snapDate,
@@ -1269,9 +1295,12 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           LS.set('xa_snap_v3', newSnap);
           console.log('[XA Data Hub] Snap saved to localStorage OK');
         } catch(e) {
-          console.warn('[XA Data Hub] localStorage save failed (data too large?) — snap is in memory only:', e.message);
-          /* Save a slim version without the full universe */
-          try { LS.set('xa_snap_v3', {...newSnap, universe: []}); } catch(e2) {}
+          console.warn('[XA Data Hub] Full save failed, trying slim...');
+          try { LS.set('xa_snap_v3', {...newSnap, universe: []}); console.log('[XA Data Hub] Slim save OK'); }
+          catch(e2) {
+            console.warn('[XA Data Hub] Slim save failed, saving priceMap only...');
+            try { LS.set('xa_snap_v3', {date: newSnap.date, priceMap, priceUpdates}); } catch(e3) {}
+          }
         }
 
         /* ═══ AUTO-PUBLISH api.json for XA-Coach ═══ */
@@ -1462,7 +1491,7 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
           const apiOps = operators.map(op => {
             const results = op.stocks.map(s => {
               const eng = runEngine(s, op.driverMap, globalDrivers);
-              const cp = livePrice(s.ticker, s.currentPrice);
+              const cp = s.currentPrice;
               return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:cp,
                 prices:s.prices, ev:eng?.ev?+eng.ev.toFixed(2):null, rr_pct:eng?.rr?+eng.rr.toFixed(2):null,
                 skew:eng?.skew?+eng.skew.toFixed(3):null, verdict:eng?.vd||null, tier:eng?.tier||null,
@@ -1575,7 +1604,7 @@ function ExportView({operators, globalDrivers}) {
       ops.forEach(op => {
         op.stocks.forEach(s => {
           const eng = runEngine(s, op.driverMap, globalDrivers);
-          const cp = livePrice(s.ticker, s.currentPrice);
+          const cp = s.currentPrice;
           csv += [s.ticker, s.name, s.verdict, op.name, op.team, cp, eng?.ev?.toFixed(2)||'', eng?.rr?.toFixed(1)||'', eng?.skew?.toFixed(2)||'', eng?.vd||'', eng?.tier||'', ...(s.prices||[]).map(p=>p)].join(',') + '\n';
         });
       });

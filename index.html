@@ -1580,7 +1580,7 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
   const [allResults, setAllResults] = useState([]); /* for rebalance-all mode */
   const [mode, setMode] = useState('single'); /* 'single' or 'all' */
 
-  const saveKey = (k) => { setAnthropicKey(k); try { localStorage.setItem('xa_anthropic_key', k); } catch {} };
+  const saveKey = (k) => { const trimmed = k.trim(); setAnthropicKey(trimmed); try { localStorage.setItem('xa_anthropic_key', trimmed); } catch {} };
   const universe = snapData?.universe || [];
 
   const callClaude = async (prompt) => {
@@ -1605,6 +1605,18 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
     const data = await resp.json();
     const text = data.content?.map(b => b.text || '').join('') || '';
     return text;
+  };
+
+  const testKey = async () => {
+    if (!anthropicKey) { setError('Enter your API key first'); return; }
+    setError(null); setProgress('Testing API connection...');
+    try {
+      const text = await callClaude('Respond with only the word "connected"');
+      setProgress(`✓ API connected — response: "${text.trim().slice(0, 50)}"`);
+    } catch (e) {
+      setError(`API test failed: ${e.message}`);
+      setProgress('');
+    }
   };
 
   const parseResponse = (text, opId) => {
@@ -1792,6 +1804,9 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
           onFocus={() => setShowKey(true)} onBlur={() => setShowKey(false)}
           placeholder="sk-ant-..." style={{flex:1,maxWidth:400,padding:'8px 12px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)'}} />
         {anthropicKey && <Badge color="var(--g)" small>✓ Saved</Badge>}
+        {anthropicKey && <button onClick={testKey} style={{padding:'6px 12px',fontSize:10,fontFamily:'var(--mono)',fontWeight:600,borderRadius:4,cursor:'pointer',border:'1px solid rgba(179,136,255,.3)',background:'rgba(179,136,255,.08)',color:'var(--p)'}}>
+          🧪 Test Connection
+        </button>}
       </div>
     </div>
 

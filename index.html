@@ -1633,32 +1633,9 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
     };
   };
 
-  const syncFMPPrices = async (stocks) => {
-    const fmpKey = localStorage.getItem('xa_fmp_key');
-    if (!fmpKey) return 0;
-    const tickers = stocks.map(s => s.ticker);
-    const res = await fetchFMPQuotes(tickers, fmpKey);
-    if (res.error || !res.quotes) return 0;
-    let updated = 0;
-    stocks.forEach(s => {
-      const q = res.quotes[s.ticker];
-      if (q && q.price > 0) { s.currentPrice = q.price; window.XA_PRICES[s.ticker] = q.price; updated++; }
-    });
-    if (updated > 0) {
-      try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
-    }
-    return updated;
-  };
-
   const rebalanceOp = async (op) => {
-    /* Step 1: Sync FMP prices */
-    setProgress(`${op.icon} ${op.name}: syncing FMP prices...`);
-    const fmpCount = await syncFMPPrices(op.stocks);
-    if (fmpCount > 0) setProgress(`${op.icon} ${op.name}: updated ${fmpCount} prices from FMP — calling Claude...`);
-    else setProgress(`${op.icon} ${op.name}: calling Claude (no FMP key or no matches)...`);
-
-    /* Step 2: Call Claude with fresh prices */
     const prompt = buildRebalancePrompt(op, masterMacros, universe, opToggles);
+    setProgress(`${op.icon} ${op.name}: calling Claude...`);
     const text = await callClaude(prompt);
     setProgress(`${op.icon} ${op.name}: parsing response...`);
     return parseResponse(text, op.id);

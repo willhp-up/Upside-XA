@@ -30,29 +30,22 @@ window.livePrice = function(ticker, hardcoded) {
   var p = window.XA_PRICES[ticker];
   return p != null ? p : hardcoded;
 };
-/* Load from localStorage on page load — try dedicated key first, then full snap */
 try {
   var pm = JSON.parse(localStorage.getItem('xa_prices'));
   if (pm && Object.keys(pm).length > 0) {
     window.XA_PRICES = pm;
-    console.log('[XA boot] Loaded ' + Object.keys(pm).length + ' prices from xa_prices. NAS.OL=' + pm['NAS.OL']);
+    console.log('[XA boot] Loaded ' + Object.keys(pm).length + ' prices from xa_prices');
   } else {
     var saved = JSON.parse(localStorage.getItem('xa_snap_v3'));
     if (saved && saved.priceMap) {
       window.XA_PRICES = saved.priceMap;
-      console.log('[XA boot] Loaded ' + Object.keys(saved.priceMap).length + ' prices from xa_snap_v3. NAS.OL=' + saved.priceMap['NAS.OL']);
-    } else {
-      console.log('[XA boot] No saved prices in localStorage');
+      console.log('[XA boot] Loaded ' + Object.keys(saved.priceMap).length + ' prices from xa_snap_v3');
     }
   }
-} catch(e) {
-  console.log('[XA boot] localStorage parse error:', e);
-}
+} catch(e) { console.log('[XA boot] localStorage error:', e); }
 </script>
 <script type="text/babel">
 const{useState,useMemo,useCallback,useEffect,useRef}=React;
-
-/* ═══════════════ STORAGE ═══════════════ */
 const LS={get(k){try{return JSON.parse(localStorage.getItem(k))}catch{return null}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
 function download(content,filename,mime='text/csv'){const b=new Blob([content],{type:mime});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u)}
 
@@ -67,17 +60,17 @@ const SCENARIOS=[
   {id:"dbu",label:"Deep Bull",color:"#06d6a0",bp:5},
 ];
 
-function runEngine(stock,driverMap,globalDrivers){
+function runEngine(stock, macroMap, masterMacros){
   if(!stock.prices||stock.prices.length!==7)return null;
-  const mapped=driverMap.filter(m=>m.active!==false);
+  const mapped=macroMap.filter(m=>m.active!==false);
   const tw=mapped.reduce((s,m)=>s+m.weight,0)||1;
   const bp=SCENARIOS.map(s=>s.bp);
   const sp=bp.map((b,si)=>{
     const dir=si-3;let ms=0;
     mapped.forEach(m=>{
-      const gd=globalDrivers.find(g=>g.id===m.driverId);
-      const sig=gd?gd.signal:0;
-      const sens=stock.sens?.[m.driverId]||0;
+      const mm=masterMacros.find(g=>g.id===m.macroId);
+      const sig=mm?mm.signal:0;
+      const sens=stock.sens?.[m.macroId]||0;
       ms+=(m.weight/tw)*sig*sens*dir*0.15;
     });
     return Math.max(1,b*(1+ms));
@@ -101,375 +94,357 @@ function runEngine(stock,driverMap,globalDrivers){
   return{pr,ev,rr,skew,vd,tier,c};
 }
 
+/* Conviction → Price Target mapping */
+function getConvictionPT(stock, eng) {
+  if (!eng || !stock.prices || stock.prices.length !== 7) return { bullPT: null, bearPT: null, conviction: 'NEUTRAL' };
+  const vd = eng.vd;
+  let bullIdx = 3, bearIdx = 3, conviction = 'NEUTRAL';
+  if (vd === 'STRONG LONG' || vd === 'STRONG SHORT') { bullIdx = 6; bearIdx = 0; conviction = 'STRONG'; }
+  else if (vd === 'LONG' || vd === 'SHORT') { bullIdx = 5; bearIdx = 1; conviction = 'MODERATE'; }
+  else if (Math.abs(eng.rr) > 3) { bullIdx = 4; bearIdx = 2; conviction = 'MILD'; }
+  return { bullPT: stock.prices[bullIdx], bearPT: stock.prices[bearIdx], conviction };
+}
+
 const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;if(t==='price'){if(Math.abs(v)>=10000)return v.toLocaleString('en',{maximumFractionDigits:0});if(Math.abs(v)>=100)return v.toFixed(1);return v.toFixed(2)}return`${v.toFixed(1)}`};
+
+/* ═══════════════ MASTER MACROS ═══════════════ */
+const MASTER_MACROS_DEFAULT = [
+  {id:"rates",   label:"Interest Rates",        category:"Economy",    signal:-0.2},
+  {id:"oil",     label:"Oil / Energy Prices",    category:"Economy",    signal:0.1},
+  {id:"consumer",label:"Consumer Confidence",    category:"Economy",    signal:0.3},
+  {id:"supply",  label:"Supply Chain / CapEx",   category:"Economy",    signal:0.3},
+  {id:"geopol",  label:"Geopolitical Escalation",category:"Security",   signal:0.4},
+  {id:"defence", label:"NATO / Defence Spend",   category:"Security",   signal:0.7},
+  {id:"regulation",label:"Regulatory Environment",category:"Security",  signal:-0.2},
+  {id:"semi",    label:"Semiconductor Cycle",    category:"Technology", signal:0.7},
+  {id:"ai",      label:"AI / Cloud Demand",      category:"Technology", signal:0.7},
+  {id:"fintech", label:"Digital Payments",       category:"Technology", signal:0.5},
+  {id:"china",   label:"China Growth & Policy",  category:"Asia",       signal:0.3},
+  {id:"fx",      label:"Currency / FX",          category:"Asia",       signal:0.2},
+  {id:"flows",   label:"Capital Flows",          category:"Asia",       signal:0.4},
+  {id:"reform",  label:"Corporate Reform",       category:"Asia",       signal:0.4},
+  {id:"kshape",  label:"K-Shape Divergence",     category:"Sector",     signal:0.6},
+  {id:"premium", label:"Premiumisation",         category:"Sector",     signal:0.5},
+  {id:"energy_tr",label:"Energy Transition",     category:"Sector",     signal:0.3},
+  {id:"healthcare",label:"GLP-1 / Biotech",      category:"Sector",     signal:0.5},
+];
+const MACRO_CATEGORIES = ["Economy","Security","Technology","Asia","Sector"];
 
 /* ═══════════════ OPERATOR REGISTRY ═══════════════ */
 const OPERATORS = [
   {
-    id:"tig", name:"Tig", fullName:"Kris 'Tig' Paronto", teamId:"travel",
-    team:"Travel", color:"#00e676", icon:"✈", file:"tig-v2.html",
+    id:"tig", name:"Tig", fullName:"Kris 'Tig' Paronto",
+    category:"GRS", team:"Travel", color:"#00e676", icon:"✈",
     desc:"K-Shape Travel Divergence",
-    driverMap:[
-      {driverId:"kshape",weight:25},{driverId:"rates_tig",weight:20},{driverId:"oil_tig",weight:20},
-      {driverId:"consumer_tig",weight:15},{driverId:"btravel",weight:10},{driverId:"premium",weight:10},
-    ],
-    drivers:[
-      {id:"kshape",label:"K-Shape Divergence",signal:0.7},
-      {id:"rates_tig",label:"Interest Rates",signal:-0.3},
-      {id:"oil_tig",label:"Oil Price Trajectory",signal:0.2},
-      {id:"consumer_tig",label:"Consumer Confidence",signal:0.4},
-      {id:"btravel",label:"Business Travel Shift",signal:0.5},
-      {id:"premium",label:"Premiumisation",signal:0.6},
+    macroMap:[
+      {macroId:"kshape",weight:25},
+      {macroId:"rates",weight:20},
+      {macroId:"oil",weight:20},
+      {macroId:"consumer",weight:15},
+      {macroId:"premium",weight:20}
     ],
     stocks:[
-      {ticker:"NAS.OL",name:"Norwegian Air",verdict:"long",currentPrice:12.8,prices:[6.5,8.2,10.5,14.8,17.5,21,26],sens:{kshape:.8,rates_tig:-.6,oil_tig:-.5,consumer_tig:.7,btravel:.3,premium:.9}},
-      {ticker:"IAG.L",name:"IAG (BA/Iberia)",verdict:"long",currentPrice:2.15,prices:[1.1,1.45,1.8,2.5,2.95,3.5,4.2],sens:{kshape:.7,rates_tig:-.4,oil_tig:-.6,consumer_tig:.6,btravel:.7,premium:.8}},
-      {ticker:"EZJ.L",name:"easyJet",verdict:"long",currentPrice:5.4,prices:[2.8,3.6,4.5,6.2,7.4,8.8,11],sens:{kshape:.6,rates_tig:-.5,oil_tig:-.7,consumer_tig:.5,btravel:.2,premium:.7}},
-      {ticker:"THYAO.IS",name:"Turkish Airlines",verdict:"long",currentPrice:282,prices:[140,185,230,320,380,450,560],sens:{kshape:.5,rates_tig:-.3,oil_tig:-.4,consumer_tig:.4,btravel:.8,premium:.7}},
-      {ticker:"QAN.AX",name:"Qantas",verdict:"long",currentPrice:8.9,prices:[4.5,5.8,7.2,10.2,12,14.5,18],sens:{kshape:.6,rates_tig:-.3,oil_tig:-.5,consumer_tig:.5,btravel:.6,premium:.8}},
-      {ticker:"MAR",name:"Marriott",verdict:"long",currentPrice:265,prices:[160,195,230,290,330,380,440],sens:{kshape:.7,rates_tig:-.2,oil_tig:-.1,consumer_tig:.8,btravel:.6,premium:.9}},
-      {ticker:"IHG.L",name:"IHG",verdict:"long",currentPrice:88.5,prices:[52,64,76,98,112,130,155],sens:{kshape:.7,rates_tig:-.2,oil_tig:-.1,consumer_tig:.7,btravel:.5,premium:.8}},
-      {ticker:"BKNG",name:"Booking Holdings",verdict:"long",currentPrice:4450,prices:[2800,3400,3900,4800,5400,6200,7500],sens:{kshape:.5,rates_tig:-.2,oil_tig:-.1,consumer_tig:.6,btravel:.4,premium:.7}},
-      {ticker:"ZURN.SW",name:"Zurich Airport",verdict:"long",currentPrice:205,prices:[130,155,180,225,260,300,360],sens:{kshape:.4,rates_tig:-.2,oil_tig:-.1,consumer_tig:.5,btravel:.3,premium:.6}},
-      {ticker:"WIZZ.L",name:"Wizz Air",verdict:"short",currentPrice:18.5,prices:[6,9.5,13,17,22,28,35],sens:{kshape:-.8,rates_tig:.5,oil_tig:.7,consumer_tig:-.6,btravel:-.2,premium:-.9}},
-      {ticker:"RYA.L",name:"Ryanair",verdict:"short",currentPrice:18.8,prices:[8.5,12,15.5,19.5,23,27,32],sens:{kshape:-.6,rates_tig:.4,oil_tig:.6,consumer_tig:-.4,btravel:-.1,premium:-.7}},
-      {ticker:"AF.PA",name:"Air France-KLM",verdict:"short",currentPrice:8.2,prices:[2.5,4,5.8,7.8,10.5,13,16],sens:{kshape:-.7,rates_tig:.6,oil_tig:.5,consumer_tig:-.5,btravel:-.3,premium:-.6}},
-      {ticker:"LHA.DE",name:"Lufthansa",verdict:"short",currentPrice:6.5,prices:[2,3.2,4.6,6.2,8,10,13],sens:{kshape:-.6,rates_tig:.5,oil_tig:.4,consumer_tig:-.4,btravel:-.4,premium:-.5}},
-      {ticker:"WH",name:"Wyndham",verdict:"short",currentPrice:82,prices:[45,55,68,80,95,110,130],sens:{kshape:-.6,rates_tig:.3,oil_tig:.2,consumer_tig:-.7,btravel:-.3,premium:-.8}},
-      {ticker:"FRA.DE",name:"Fraport",verdict:"short",currentPrice:52,prices:[28,36,44,54,62,72,85],sens:{kshape:-.4,rates_tig:.4,oil_tig:.2,consumer_tig:-.3,btravel:-.2,premium:-.5}},
+      {ticker:"NAS.OL",name:"Norwegian Air",verdict:"long",currentPrice:12.8,prices:[6.5,8.2,10.5,14.8,17.5,21,26],sens:{kshape:0.8,rates:-0.6,oil:-0.5,consumer:0.7,premium:0.6}},
+      {ticker:"IAG.L",name:"IAG (BA/Iberia)",verdict:"long",currentPrice:2.15,prices:[1.1,1.45,1.8,2.5,2.95,3.5,4.2],sens:{kshape:0.7,rates:-0.4,oil:-0.6,consumer:0.6,premium:0.8}},
+      {ticker:"EZJ.L",name:"easyJet",verdict:"long",currentPrice:5.4,prices:[2.8,3.6,4.5,6.2,7.4,8.8,11],sens:{kshape:0.6,rates:-0.5,oil:-0.7,consumer:0.5,premium:0.5}},
+      {ticker:"THYAO.IS",name:"Turkish Airlines",verdict:"long",currentPrice:282,prices:[140,185,230,320,380,450,560],sens:{kshape:0.5,rates:-0.3,oil:-0.4,consumer:0.4,premium:0.8}},
+      {ticker:"QAN.AX",name:"Qantas",verdict:"long",currentPrice:8.9,prices:[4.5,5.8,7.2,10.2,12,14.5,18],sens:{kshape:0.6,rates:-0.3,oil:-0.5,consumer:0.5,premium:0.7}},
+      {ticker:"MAR",name:"Marriott",verdict:"long",currentPrice:265,prices:[160,195,230,290,330,380,440],sens:{kshape:0.7,rates:-0.2,oil:-0.1,consumer:0.8,premium:0.8}},
+      {ticker:"IHG.L",name:"IHG",verdict:"long",currentPrice:88.5,prices:[52,64,76,98,112,130,155],sens:{kshape:0.7,rates:-0.2,oil:-0.1,consumer:0.7,premium:0.7}},
+      {ticker:"BKNG",name:"Booking Holdings",verdict:"long",currentPrice:4450,prices:[2800,3400,3900,4800,5400,6200,7500],sens:{kshape:0.5,rates:-0.2,oil:-0.1,consumer:0.6,premium:0.6}},
+      {ticker:"ZURN.SW",name:"Zurich Airport",verdict:"long",currentPrice:205,prices:[130,155,180,225,260,300,360],sens:{kshape:0.4,rates:-0.2,oil:-0.1,consumer:0.5,premium:0.5}},
+      {ticker:"WIZZ.L",name:"Wizz Air",verdict:"short",currentPrice:18.5,prices:[6,9.5,13,17,22,28,35],sens:{kshape:-0.8,rates:0.5,oil:0.7,consumer:-0.6,premium:-0.5}},
+      {ticker:"RYA.L",name:"Ryanair",verdict:"short",currentPrice:18.8,prices:[8.5,12,15.5,19.5,23,27,32],sens:{kshape:-0.6,rates:0.4,oil:0.6,consumer:-0.4,premium:-0.4}},
+      {ticker:"AF.PA",name:"Air France-KLM",verdict:"short",currentPrice:8.2,prices:[2.5,4,5.8,7.8,10.5,13,16],sens:{kshape:-0.7,rates:0.6,oil:0.5,consumer:-0.5,premium:-0.4}},
+      {ticker:"LHA.DE",name:"Lufthansa",verdict:"short",currentPrice:6.5,prices:[2,3.2,4.6,6.2,8,10,13],sens:{kshape:-0.6,rates:0.5,oil:0.4,consumer:-0.4,premium:-0.4}},
+      {ticker:"WH",name:"Wyndham",verdict:"short",currentPrice:82,prices:[45,55,68,80,95,110,130],sens:{kshape:-0.6,rates:0.3,oil:0.2,consumer:-0.7,premium:-0.5}},
+      {ticker:"FRA.DE",name:"Fraport",verdict:"short",currentPrice:52,prices:[28,36,44,54,62,72,85],sens:{kshape:-0.4,rates:0.4,oil:0.2,consumer:-0.3,premium:-0.3}}
     ]
   },
   {
-    id:"rone", name:"Rone", fullName:"Mark 'Oz' Geist", teamId:"defence",
-    team:"Defence", color:"#40c4ff", icon:"🛡", file:"rone-v2.html",
+    id:"rone", name:"Rone", fullName:"Mark 'Oz' Geist",
+    category:"GRS", team:"Defence", color:"#40c4ff", icon:"🛡",
     desc:"NATO Rearmament Supercycle",
-    driverMap:[
-      {driverId:"nato",weight:30},{driverId:"geopol",weight:25},{driverId:"autonomy",weight:15},
-      {driverId:"rates_rone",weight:10},{driverId:"supply",weight:10},{driverId:"oil_rone",weight:10},
-    ],
-    drivers:[
-      {id:"nato",label:"NATO / Defence Spend",signal:0.8},
-      {id:"geopol",label:"Geopolitical Escalation",signal:0.5},
-      {id:"autonomy",label:"EU Strategic Autonomy",signal:0.6},
-      {id:"rates_rone",label:"Interest Rates",signal:-0.3},
-      {id:"supply",label:"Supply Chain Capacity",signal:0.3},
-      {id:"oil_rone",label:"Oil Price",signal:0.2},
+    macroMap:[
+      {macroId:"defence",weight:30},
+      {macroId:"geopol",weight:25},
+      {macroId:"regulation",weight:15},
+      {macroId:"rates",weight:10},
+      {macroId:"supply",weight:10},
+      {macroId:"oil",weight:10}
     ],
     stocks:[
-      {ticker:"BA.L",name:"BAE Systems",verdict:"long",currentPrice:2031,prices:[1400,1650,1850,2200,2450,2750,3200],sens:{nato:.8,geopol:.7,autonomy:.5,rates_rone:-.3,supply:-.2,oil_rone:-.1}},
-      {ticker:"RHM.DE",name:"Rheinmetall",verdict:"long",currentPrice:1609,prices:[900,1100,1350,1750,2050,2400,3000],sens:{nato:.9,geopol:.9,autonomy:.7,rates_rone:-.4,supply:-.6,oil_rone:-.1}},
-      {ticker:"SAAB-B.ST",name:"Saab",verdict:"long",currentPrice:657,prices:[380,470,560,720,840,980,1200],sens:{nato:.8,geopol:.8,autonomy:.6,rates_rone:-.2,supply:-.3,oil_rone:-.1}},
-      {ticker:"HO.PA",name:"Thales",verdict:"long",currentPrice:245,prices:[165,195,220,270,310,360,430],sens:{nato:.7,geopol:.6,autonomy:.7,rates_rone:-.2,supply:-.2,oil_rone:-.1}},
-      {ticker:"LDO.MI",name:"Leonardo",verdict:"long",currentPrice:54,prices:[30,38,46,60,70,82,100],sens:{nato:.7,geopol:.6,autonomy:.6,rates_rone:-.5,supply:-.3,oil_rone:-.1}},
-      {ticker:"AIR.PA",name:"Airbus D&S",verdict:"long",currentPrice:192,prices:[130,155,175,210,240,275,330],sens:{nato:.7,geopol:.5,autonomy:.8,rates_rone:-.3,supply:-.4,oil_rone:-.1}},
-      {ticker:"RR.L",name:"Rolls-Royce",verdict:"long",currentPrice:1271,prices:[800,950,1100,1400,1600,1850,2200],sens:{nato:.5,geopol:.4,autonomy:.4,rates_rone:-.3,supply:-.3,oil_rone:-.1}},
-      {ticker:"QQ.L",name:"QinetiQ",verdict:"long",currentPrice:474,prices:[320,380,430,520,580,660,780],sens:{nato:.6,geopol:.4,autonomy:.3,rates_rone:-.2,supply:-.1,oil_rone:0}},
-      {ticker:"LMT",name:"Lockheed Martin",verdict:"short",currentPrice:653,prices:[420,500,570,640,720,810,950],sens:{nato:.3,geopol:.4,autonomy:-.7,rates_rone:-.2,supply:-.1,oil_rone:0}},
-      {ticker:"GD",name:"General Dynamics",verdict:"short",currentPrice:360,prices:[240,280,320,365,410,460,530],sens:{nato:.2,geopol:.3,autonomy:-.6,rates_rone:-.3,supply:-.1,oil_rone:0}},
-      {ticker:"HAG.DE",name:"Hensoldt",verdict:"short",currentPrice:81,prices:[40,52,65,78,95,115,145],sens:{nato:.5,geopol:.4,autonomy:.3,rates_rone:-.5,supply:-.6,oil_rone:0}},
-      {ticker:"AVON.L",name:"Avon Protection",verdict:"short",currentPrice:1050,prices:[600,750,900,1050,1200,1400,1700],sens:{nato:.3,geopol:.3,autonomy:.1,rates_rone:-.3,supply:-.4,oil_rone:0}},
-      {ticker:"CHG.L",name:"Chemring",verdict:"short",currentPrice:500,prices:[320,380,440,510,580,660,780],sens:{nato:.4,geopol:.3,autonomy:.2,rates_rone:-.3,supply:-.5,oil_rone:0}},
+      {ticker:"BA.L",name:"BAE Systems",verdict:"long",currentPrice:2031,prices:[1400,1650,1850,2200,2450,2750,3200],sens:{defence:0.8,geopol:0.7,regulation:0.5,rates:-0.3,supply:-0.2,oil:-0.1}},
+      {ticker:"RHM.DE",name:"Rheinmetall",verdict:"long",currentPrice:1609,prices:[900,1100,1350,1750,2050,2400,3000],sens:{defence:0.9,geopol:0.9,regulation:0.7,rates:-0.4,supply:-0.6,oil:-0.1}},
+      {ticker:"SAAB-B.ST",name:"Saab",verdict:"long",currentPrice:657,prices:[380,470,560,720,840,980,1200],sens:{defence:0.8,geopol:0.8,regulation:0.6,rates:-0.2,supply:-0.3,oil:-0.1}},
+      {ticker:"HO.PA",name:"Thales",verdict:"long",currentPrice:245,prices:[165,195,220,270,310,360,430],sens:{defence:0.7,geopol:0.6,regulation:0.7,rates:-0.2,supply:-0.2,oil:-0.1}},
+      {ticker:"LDO.MI",name:"Leonardo",verdict:"long",currentPrice:54,prices:[30,38,46,60,70,82,100],sens:{defence:0.7,geopol:0.6,regulation:0.6,rates:-0.5,supply:-0.3,oil:-0.1}},
+      {ticker:"AIR.PA",name:"Airbus D&S",verdict:"long",currentPrice:192,prices:[130,155,175,210,240,275,330],sens:{defence:0.7,geopol:0.5,regulation:0.8,rates:-0.3,supply:-0.4,oil:-0.1}},
+      {ticker:"RR.L",name:"Rolls-Royce",verdict:"long",currentPrice:1271,prices:[800,950,1100,1400,1600,1850,2200],sens:{defence:0.5,geopol:0.4,regulation:0.4,rates:-0.3,supply:-0.3,oil:-0.1}},
+      {ticker:"QQ.L",name:"QinetiQ",verdict:"long",currentPrice:474,prices:[320,380,430,520,580,660,780],sens:{defence:0.6,geopol:0.4,regulation:0.3,rates:-0.2,supply:-0.1,oil:0}},
+      {ticker:"LMT",name:"Lockheed Martin",verdict:"short",currentPrice:653,prices:[420,500,570,640,720,810,950],sens:{defence:0.3,geopol:0.4,regulation:-0.7,rates:-0.2,supply:-0.1,oil:0}},
+      {ticker:"GD",name:"General Dynamics",verdict:"short",currentPrice:360,prices:[240,280,320,365,410,460,530],sens:{defence:0.2,geopol:0.3,regulation:-0.6,rates:-0.3,supply:-0.1,oil:0}},
+      {ticker:"HAG.DE",name:"Hensoldt",verdict:"short",currentPrice:81,prices:[40,52,65,78,95,115,145],sens:{defence:0.5,geopol:0.4,regulation:0.3,rates:-0.5,supply:-0.6,oil:0}},
+      {ticker:"AVON.L",name:"Avon Protection",verdict:"short",currentPrice:1050,prices:[600,750,900,1050,1200,1400,1700],sens:{defence:0.3,geopol:0.3,regulation:0.1,rates:-0.3,supply:-0.4,oil:0}},
+      {ticker:"CHG.L",name:"Chemring",verdict:"short",currentPrice:500,prices:[320,380,440,510,580,660,780],sens:{defence:0.4,geopol:0.3,regulation:0.2,rates:-0.3,supply:-0.5,oil:0}}
     ]
   },
   {
-    id:"tanto", name:"Tanto", fullName:"Kris 'Tanto' Paronto", teamId:"energy",
-    team:"Energy & Commodities", color:"#f59e0b", icon:"🛢", file:"tanto-v2.html",
+    id:"tanto", name:"Tanto", fullName:"Kris 'Tanto' Paronto",
+    category:"GRS", team:"Energy & Commodities", color:"#f59e0b", icon:"🛢",
     desc:"Energy Transition Divergence",
-    driverMap:[
-      {driverId:"t_oilprice",weight:30},{driverId:"t_opec",weight:20},{driverId:"t_transition",weight:15},
-      {driverId:"t_rates",weight:10},{driverId:"t_china",weight:15},{driverId:"t_capex",weight:10},
-    ],
-    drivers:[
-      {id:"t_oilprice",label:"Oil Price Trajectory",signal:-0.2},
-      {id:"t_opec",label:"OPEC+ Discipline",signal:0.3},
-      {id:"t_transition",label:"Energy Transition",signal:0.4},
-      {id:"t_rates",label:"Interest Rates",signal:-0.3},
-      {id:"t_china",label:"China Demand",signal:-0.2},
-      {id:"t_capex",label:"Capex Discipline",signal:0.5},
+    macroMap:[
+      {macroId:"oil",weight:25},
+      {macroId:"supply",weight:25},
+      {macroId:"energy_tr",weight:15},
+      {macroId:"rates",weight:10},
+      {macroId:"china",weight:15},
+      {macroId:"regulation",weight:10}
     ],
     stocks:[
-      {ticker:"SHEL",name:"Shell",verdict:"long",currentPrice:78,prices:[48,58,68,85,98,115,140],sens:{t_oilprice:.7,t_opec:.6,t_transition:-.3,t_rates:-.2,t_china:.5,t_capex:.7}},
-      {ticker:"XOM",name:"ExxonMobil",verdict:"long",currentPrice:149,prices:[95,115,132,160,182,210,250],sens:{t_oilprice:.8,t_opec:.5,t_transition:-.4,t_rates:-.1,t_china:.4,t_capex:.8}},
-      {ticker:"CVX",name:"Chevron",verdict:"long",currentPrice:184,prices:[115,140,162,195,225,260,310],sens:{t_oilprice:.7,t_opec:.5,t_transition:-.3,t_rates:-.2,t_china:.4,t_capex:.9}},
-      {ticker:"TTE",name:"TotalEnergies",verdict:"long",currentPrice:77,prices:[45,55,66,82,96,115,140],sens:{t_oilprice:.6,t_opec:.5,t_transition:.2,t_rates:-.2,t_china:.5,t_capex:.6}},
-      {ticker:"EQNR",name:"Equinor",verdict:"long",currentPrice:28,prices:[16,20,24,30,36,43,52],sens:{t_oilprice:.8,t_opec:.6,t_transition:.3,t_rates:-.1,t_china:.3,t_capex:.5}},
-      {ticker:"CNQ",name:"Canadian Natural",verdict:"long",currentPrice:28,prices:[15,19,23,30,36,44,55],sens:{t_oilprice:.9,t_opec:.4,t_transition:-.5,t_rates:-.3,t_china:.3,t_capex:.8}},
-      {ticker:"SU",name:"Suncor Energy",verdict:"long",currentPrice:55,prices:[32,39,47,59,70,84,105],sens:{t_oilprice:.8,t_opec:.4,t_transition:-.4,t_rates:-.2,t_china:.3,t_capex:.7}},
-      {ticker:"VET",name:"Vermilion Energy",verdict:"long",currentPrice:9.5,prices:[4,5.5,7.5,11,14,18,24],sens:{t_oilprice:.9,t_opec:.5,t_transition:-.6,t_rates:-.4,t_china:.4,t_capex:.6}},
-      {ticker:"BP",name:"BP",verdict:"short",currentPrice:39,prices:[18,24,31,38,48,58,72],sens:{t_oilprice:-.5,t_opec:-.4,t_transition:.3,t_rates:.3,t_china:-.3,t_capex:-.7}},
-      {ticker:"OXY",name:"Occidental",verdict:"short",currentPrice:46,prices:[22,30,38,48,56,66,80],sens:{t_oilprice:-.6,t_opec:-.3,t_transition:-.2,t_rates:.2,t_china:-.2,t_capex:-.8}},
-      {ticker:"RIG",name:"Transocean",verdict:"short",currentPrice:3.8,prices:[1,1.8,2.8,4,5.5,7.5,10],sens:{t_oilprice:-.8,t_opec:-.5,t_transition:-.6,t_rates:.5,t_china:-.4,t_capex:-.5}},
-      {ticker:"HAL",name:"Halliburton",verdict:"short",currentPrice:24,prices:[12,16,20,25,30,36,44],sens:{t_oilprice:-.6,t_opec:-.4,t_transition:-.3,t_rates:.2,t_china:-.3,t_capex:-.4}},
-      {ticker:"PBR",name:"Petrobras",verdict:"short",currentPrice:15,prices:[7,9.5,12.5,15.5,19,23,28],sens:{t_oilprice:-.5,t_opec:-.3,t_transition:-.1,t_rates:.4,t_china:-.5,t_capex:-.3}},
+      {ticker:"SHEL",name:"Shell",verdict:"long",currentPrice:78,prices:[48,58,68,85,98,115,140],sens:{oil:0.7,supply:0.6,energy_tr:-0.3,rates:-0.2,china:0.5,regulation:0.7}},
+      {ticker:"XOM",name:"ExxonMobil",verdict:"long",currentPrice:149,prices:[95,115,132,160,182,210,250],sens:{oil:0.8,supply:0.5,energy_tr:-0.4,rates:-0.1,china:0.4,regulation:0.8}},
+      {ticker:"CVX",name:"Chevron",verdict:"long",currentPrice:184,prices:[115,140,162,195,225,260,310],sens:{oil:0.7,supply:0.5,energy_tr:-0.3,rates:-0.2,china:0.4,regulation:0.9}},
+      {ticker:"TTE",name:"TotalEnergies",verdict:"long",currentPrice:77,prices:[45,55,66,82,96,115,140],sens:{oil:0.6,supply:0.5,energy_tr:0.2,rates:-0.2,china:0.5,regulation:0.6}},
+      {ticker:"EQNR",name:"Equinor",verdict:"long",currentPrice:28,prices:[16,20,24,30,36,43,52],sens:{oil:0.8,supply:0.6,energy_tr:0.3,rates:-0.1,china:0.3,regulation:0.5}},
+      {ticker:"CNQ",name:"Canadian Natural",verdict:"long",currentPrice:28,prices:[15,19,23,30,36,44,55],sens:{oil:0.9,supply:0.4,energy_tr:-0.5,rates:-0.3,china:0.3,regulation:0.8}},
+      {ticker:"SU",name:"Suncor Energy",verdict:"long",currentPrice:55,prices:[32,39,47,59,70,84,105],sens:{oil:0.8,supply:0.4,energy_tr:-0.4,rates:-0.2,china:0.3,regulation:0.7}},
+      {ticker:"VET",name:"Vermilion Energy",verdict:"long",currentPrice:9.5,prices:[4,5.5,7.5,11,14,18,24],sens:{oil:0.9,supply:0.5,energy_tr:-0.6,rates:-0.4,china:0.4,regulation:0.6}},
+      {ticker:"BP",name:"BP",verdict:"short",currentPrice:39,prices:[18,24,31,38,48,58,72],sens:{oil:-0.5,supply:-0.4,energy_tr:0.3,rates:0.3,china:-0.3,regulation:-0.7}},
+      {ticker:"OXY",name:"Occidental",verdict:"short",currentPrice:46,prices:[22,30,38,48,56,66,80],sens:{oil:-0.6,supply:-0.3,energy_tr:-0.2,rates:0.2,china:-0.2,regulation:-0.8}},
+      {ticker:"RIG",name:"Transocean",verdict:"short",currentPrice:3.8,prices:[1,1.8,2.8,4,5.5,7.5,10],sens:{oil:-0.8,supply:-0.5,energy_tr:-0.6,rates:0.5,china:-0.4,regulation:-0.5}},
+      {ticker:"HAL",name:"Halliburton",verdict:"short",currentPrice:24,prices:[12,16,20,25,30,36,44],sens:{oil:-0.6,supply:-0.4,energy_tr:-0.3,rates:0.2,china:-0.3,regulation:-0.4}},
+      {ticker:"PBR",name:"Petrobras",verdict:"short",currentPrice:15,prices:[7,9.5,12.5,15.5,19,23,28],sens:{oil:-0.5,supply:-0.3,energy_tr:-0.1,rates:0.4,china:-0.5,regulation:-0.3}}
     ]
   },
   {
-    id:"jack", name:"Jack", fullName:"Jack Silva", teamId:"semiconductors",
-    team:"AI & Semiconductors", color:"#818cf8", icon:"🧠", file:"jack-v2.html",
+    id:"jack", name:"Jack", fullName:"Jack Silva",
+    category:"GRS", team:"AI & Semiconductors", color:"#818cf8", icon:"🧠",
     desc:"AI Capex Supercycle",
-    driverMap:[
-      {driverId:"j_aicapex",weight:30},{driverId:"j_china",weight:20},{driverId:"j_rates",weight:15},
-      {driverId:"j_consumer",weight:10},{driverId:"j_foundry",weight:15},{driverId:"j_regulation",weight:10},
-    ],
-    drivers:[
-      {id:"j_aicapex",label:"AI Capex Momentum",signal:0.7},
-      {id:"j_china",label:"China/Export Controls",signal:-0.3},
-      {id:"j_rates",label:"Rates & Multiples",signal:-0.2},
-      {id:"j_consumer",label:"Consumer Demand",signal:0.3},
-      {id:"j_foundry",label:"Foundry/Supply Chain",signal:0.4},
-      {id:"j_regulation",label:"AI Regulation Risk",signal:-0.1},
+    macroMap:[
+      {macroId:"ai",weight:30},
+      {macroId:"china",weight:20},
+      {macroId:"rates",weight:15},
+      {macroId:"consumer",weight:10},
+      {macroId:"semi",weight:15},
+      {macroId:"regulation",weight:10}
     ],
     stocks:[
-      {ticker:"NVDA",name:"NVIDIA",verdict:"long",currentPrice:183,prices:[95,125,155,200,240,290,360],sens:{j_aicapex:.9,j_china:-.4,j_rates:-.3,j_consumer:.3,j_foundry:.6,j_regulation:-.4}},
-      {ticker:"TSM",name:"TSMC",verdict:"long",currentPrice:366,prices:[200,260,320,400,475,560,680],sens:{j_aicapex:.7,j_china:-.6,j_rates:-.2,j_consumer:.4,j_foundry:.9,j_regulation:-.2}},
-      {ticker:"AVGO",name:"Broadcom",verdict:"long",currentPrice:325,prices:[180,235,285,355,420,500,620],sens:{j_aicapex:.8,j_china:-.3,j_rates:-.3,j_consumer:.2,j_foundry:.5,j_regulation:-.3}},
-      {ticker:"ASML",name:"ASML",verdict:"long",currentPrice:1407,prices:[800,1000,1200,1500,1750,2050,2500],sens:{j_aicapex:.6,j_china:-.5,j_rates:-.3,j_consumer:.2,j_foundry:.8,j_regulation:-.2}},
-      {ticker:"AMAT",name:"Applied Materials",verdict:"long",currentPrice:180,prices:[105,130,158,195,230,275,340],sens:{j_aicapex:.5,j_china:-.5,j_rates:-.2,j_consumer:.3,j_foundry:.7,j_regulation:-.1}},
-      {ticker:"MRVL",name:"Marvell Tech",verdict:"long",currentPrice:105,prices:[50,68,88,115,140,175,220],sens:{j_aicapex:.8,j_china:-.2,j_rates:-.4,j_consumer:.2,j_foundry:.4,j_regulation:-.3}},
-      {ticker:"ALAB",name:"Astera Labs",verdict:"long",currentPrice:95,prices:[35,52,72,105,140,185,250],sens:{j_aicapex:.9,j_china:-.1,j_rates:-.5,j_consumer:.1,j_foundry:.5,j_regulation:-.2}},
-      {ticker:"MU",name:"Micron",verdict:"long",currentPrice:98,prices:[52,68,82,108,130,160,200],sens:{j_aicapex:.7,j_china:-.3,j_rates:-.3,j_consumer:.5,j_foundry:.6,j_regulation:-.1}},
-      {ticker:"AMD",name:"AMD",verdict:"short",currentPrice:207,prices:[100,135,175,215,260,310,380],sens:{j_aicapex:-.3,j_china:.2,j_rates:.2,j_consumer:-.2,j_foundry:-.3,j_regulation:.2}},
-      {ticker:"INTC",name:"Intel",verdict:"short",currentPrice:24,prices:[10,14,19,25,32,40,52],sens:{j_aicapex:-.4,j_china:.3,j_rates:.3,j_consumer:-.1,j_foundry:-.6,j_regulation:.1}},
-      {ticker:"QCOM",name:"Qualcomm",verdict:"short",currentPrice:168,prices:[90,120,148,175,205,240,285],sens:{j_aicapex:-.2,j_china:.4,j_rates:.2,j_consumer:-.4,j_foundry:-.2,j_regulation:.3}},
-      {ticker:"ARM",name:"ARM Holdings",verdict:"short",currentPrice:172,prices:[80,110,145,180,220,270,340],sens:{j_aicapex:-.2,j_china:.1,j_rates:.3,j_consumer:-.3,j_foundry:-.2,j_regulation:.4}},
-      {ticker:"SMCI",name:"Super Micro",verdict:"short",currentPrice:40,prices:[12,20,30,42,58,78,105],sens:{j_aicapex:-.5,j_china:.2,j_rates:.3,j_consumer:-.1,j_foundry:-.4,j_regulation:.3}},
+      {ticker:"NVDA",name:"NVIDIA",verdict:"long",currentPrice:183,prices:[95,125,155,200,240,290,360],sens:{ai:0.9,china:-0.4,rates:-0.3,consumer:0.3,semi:0.6,regulation:-0.4}},
+      {ticker:"TSM",name:"TSMC",verdict:"long",currentPrice:366,prices:[200,260,320,400,475,560,680],sens:{ai:0.7,china:-0.6,rates:-0.2,consumer:0.4,semi:0.9,regulation:-0.2}},
+      {ticker:"AVGO",name:"Broadcom",verdict:"long",currentPrice:325,prices:[180,235,285,355,420,500,620],sens:{ai:0.8,china:-0.3,rates:-0.3,consumer:0.2,semi:0.5,regulation:-0.3}},
+      {ticker:"ASML",name:"ASML",verdict:"long",currentPrice:1407,prices:[800,1000,1200,1500,1750,2050,2500],sens:{ai:0.6,china:-0.5,rates:-0.3,consumer:0.2,semi:0.8,regulation:-0.2}},
+      {ticker:"AMAT",name:"Applied Materials",verdict:"long",currentPrice:180,prices:[105,130,158,195,230,275,340],sens:{ai:0.5,china:-0.5,rates:-0.2,consumer:0.3,semi:0.7,regulation:-0.1}},
+      {ticker:"MRVL",name:"Marvell Tech",verdict:"long",currentPrice:105,prices:[50,68,88,115,140,175,220],sens:{ai:0.8,china:-0.2,rates:-0.4,consumer:0.2,semi:0.4,regulation:-0.3}},
+      {ticker:"ALAB",name:"Astera Labs",verdict:"long",currentPrice:95,prices:[35,52,72,105,140,185,250],sens:{ai:0.9,china:-0.1,rates:-0.5,consumer:0.1,semi:0.5,regulation:-0.2}},
+      {ticker:"MU",name:"Micron",verdict:"long",currentPrice:98,prices:[52,68,82,108,130,160,200],sens:{ai:0.7,china:-0.3,rates:-0.3,consumer:0.5,semi:0.6,regulation:-0.1}},
+      {ticker:"AMD",name:"AMD",verdict:"short",currentPrice:207,prices:[100,135,175,215,260,310,380],sens:{ai:-0.3,china:0.2,rates:0.2,consumer:-0.2,semi:-0.3,regulation:0.2}},
+      {ticker:"INTC",name:"Intel",verdict:"short",currentPrice:24,prices:[10,14,19,25,32,40,52],sens:{ai:-0.4,china:0.3,rates:0.3,consumer:-0.1,semi:-0.6,regulation:0.1}},
+      {ticker:"QCOM",name:"Qualcomm",verdict:"short",currentPrice:168,prices:[90,120,148,175,205,240,285],sens:{ai:-0.2,china:0.4,rates:0.2,consumer:-0.4,semi:-0.2,regulation:0.3}},
+      {ticker:"ARM",name:"ARM Holdings",verdict:"short",currentPrice:172,prices:[80,110,145,180,220,270,340],sens:{ai:-0.2,china:0.1,rates:0.3,consumer:-0.3,semi:-0.2,regulation:0.4}},
+      {ticker:"SMCI",name:"Super Micro",verdict:"short",currentPrice:40,prices:[12,20,30,42,58,78,105],sens:{ai:-0.5,china:0.2,rates:0.3,consumer:-0.1,semi:-0.4,regulation:0.3}}
     ]
   },
   {
-    id:"boon", name:"Boon", fullName:"Dave 'Boon' Benton", teamId:"fintech",
-    team:"Fintech & Payments", color:"#34d399", icon:"💳", file:"boon-v2.html",
+    id:"boon", name:"Boon", fullName:"Dave 'Boon' Benton",
+    category:"GRS", team:"Fintech & Payments", color:"#34d399", icon:"💳",
     desc:"Digital Payments Revolution",
-    driverMap:[
-      {driverId:"b_digital",weight:25},{driverId:"b_rates",weight:20},{driverId:"b_consumer",weight:20},
-      {driverId:"b_regulation",weight:15},{driverId:"b_crypto",weight:10},{driverId:"b_em",weight:10},
-    ],
-    drivers:[
-      {id:"b_digital",label:"Digital Payment Shift",signal:0.6},
-      {id:"b_rates",label:"Rate Environment",signal:-0.3},
-      {id:"b_consumer",label:"Consumer Spend",signal:0.3},
-      {id:"b_regulation",label:"Regulatory/Cap Risk",signal:-0.4},
-      {id:"b_crypto",label:"Crypto/DeFi Momentum",signal:0.2},
-      {id:"b_em",label:"EM Fintech Growth",signal:0.5},
+    macroMap:[
+      {macroId:"fintech",weight:30},
+      {macroId:"rates",weight:20},
+      {macroId:"consumer",weight:20},
+      {macroId:"regulation",weight:15},
+      {macroId:"flows",weight:15}
     ],
     stocks:[
-      {ticker:"V",name:"Visa",verdict:"long",currentPrice:340,prices:[220,260,300,365,420,485,570],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.5}},
-      {ticker:"MA",name:"Mastercard",verdict:"long",currentPrice:518,prices:[340,400,465,555,640,740,870],sens:{b_digital:.8,b_rates:-.1,b_consumer:.6,b_regulation:-.5,b_crypto:-.1,b_em:.6}},
-      {ticker:"ADYEN.AS",name:"Adyen",verdict:"long",currentPrice:1520,prices:[800,1050,1300,1650,1950,2350,2900],sens:{b_digital:.9,b_rates:-.2,b_consumer:.5,b_regulation:-.3,b_crypto:.2,b_em:.7}},
-      {ticker:"SOFI",name:"SoFi Technologies",verdict:"long",currentPrice:19.7,prices:[8,12,16,22,28,36,48],sens:{b_digital:.6,b_rates:-.6,b_consumer:.4,b_regulation:-.2,b_crypto:.5,b_em:.3}},
-      {ticker:"MELI",name:"MercadoLibre",verdict:"long",currentPrice:2050,prices:[1100,1400,1750,2200,2650,3200,4000],sens:{b_digital:.7,b_rates:-.3,b_consumer:.5,b_regulation:-.2,b_crypto:.4,b_em:.9}},
-      {ticker:"COIN",name:"Coinbase",verdict:"long",currentPrice:265,prices:[100,155,215,290,380,500,680],sens:{b_digital:.3,b_rates:-.4,b_consumer:.2,b_regulation:-.3,b_crypto:.9,b_em:.2}},
-      {ticker:"AFRM",name:"Affirm",verdict:"long",currentPrice:62,prices:[22,35,48,68,90,120,165],sens:{b_digital:.7,b_rates:-.7,b_consumer:.6,b_regulation:-.4,b_crypto:.3,b_em:.4}},
-      {ticker:"NU",name:"Nu Holdings",verdict:"long",currentPrice:12.5,prices:[5.5,7.5,10,13.5,17,22,29],sens:{b_digital:.7,b_rates:-.4,b_consumer:.5,b_regulation:-.2,b_crypto:.3,b_em:.8}},
-      {ticker:"PYPL",name:"PayPal",verdict:"short",currentPrice:40,prices:[18,25,33,42,52,64,80],sens:{b_digital:-.3,b_rates:.2,b_consumer:-.2,b_regulation:.3,b_crypto:-.1,b_em:-.2}},
-      {ticker:"XYZ",name:"Block (Square)",verdict:"short",currentPrice:72,prices:[32,45,58,75,92,115,145],sens:{b_digital:-.2,b_rates:.1,b_consumer:-.3,b_regulation:.2,b_crypto:.4,b_em:-.1}},
-      {ticker:"FIS",name:"Fidelity Nat'l Info",verdict:"short",currentPrice:78,prices:[45,55,66,80,92,108,128],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.1,b_regulation:.4,b_crypto:-.2,b_em:-.3}},
-      {ticker:"GPN",name:"Global Payments",verdict:"short",currentPrice:95,prices:[52,65,80,98,115,135,160],sens:{b_digital:-.5,b_rates:.3,b_consumer:-.2,b_regulation:.4,b_crypto:-.1,b_em:-.3}},
-      {ticker:"WU",name:"Western Union",verdict:"short",currentPrice:11,prices:[5,6.5,8.5,11,14,17,21],sens:{b_digital:-.8,b_rates:.2,b_consumer:-.3,b_regulation:.3,b_crypto:-.2,b_em:-.7}},
+      {ticker:"V",name:"Visa",verdict:"long",currentPrice:340,prices:[220,260,300,365,420,485,570],sens:{rates:-0.1,consumer:0.6,regulation:-0.5,flows:0.5,fintech:0.4}},
+      {ticker:"MA",name:"Mastercard",verdict:"long",currentPrice:518,prices:[340,400,465,555,640,740,870],sens:{rates:-0.1,consumer:0.6,regulation:-0.5,flows:0.6,fintech:0.4}},
+      {ticker:"ADYEN.AS",name:"Adyen",verdict:"long",currentPrice:1520,prices:[800,1050,1300,1650,1950,2350,2900],sens:{rates:-0.2,consumer:0.5,regulation:-0.3,flows:0.7,fintech:0.6}},
+      {ticker:"SOFI",name:"SoFi Technologies",verdict:"long",currentPrice:19.7,prices:[8,12,16,22,28,36,48],sens:{rates:-0.6,consumer:0.4,regulation:-0.2,flows:0.3,fintech:0.6}},
+      {ticker:"MELI",name:"MercadoLibre",verdict:"long",currentPrice:2050,prices:[1100,1400,1750,2200,2650,3200,4000],sens:{rates:-0.3,consumer:0.5,regulation:-0.2,flows:0.9,fintech:0.6}},
+      {ticker:"COIN",name:"Coinbase",verdict:"long",currentPrice:265,prices:[100,155,215,290,380,500,680],sens:{rates:-0.4,consumer:0.2,regulation:-0.3,flows:0.2,fintech:0.6}},
+      {ticker:"AFRM",name:"Affirm",verdict:"long",currentPrice:62,prices:[22,35,48,68,90,120,165],sens:{rates:-0.7,consumer:0.6,regulation:-0.4,flows:0.4,fintech:0.5}},
+      {ticker:"NU",name:"Nu Holdings",verdict:"long",currentPrice:12.5,prices:[5.5,7.5,10,13.5,17,22,29],sens:{rates:-0.4,consumer:0.5,regulation:-0.2,flows:0.8,fintech:0.5}},
+      {ticker:"PYPL",name:"PayPal",verdict:"short",currentPrice:40,prices:[18,25,33,42,52,64,80],sens:{rates:0.2,consumer:-0.2,regulation:0.3,flows:-0.2,fintech:-0.2}},
+      {ticker:"XYZ",name:"Block (Square)",verdict:"short",currentPrice:72,prices:[32,45,58,75,92,115,145],sens:{rates:0.1,consumer:-0.3,regulation:0.2,flows:-0.1,fintech:0.1}},
+      {ticker:"FIS",name:"Fidelity Nat'l Info",verdict:"short",currentPrice:78,prices:[45,55,66,80,92,108,128],sens:{rates:0.3,consumer:-0.1,regulation:0.4,flows:-0.3,fintech:-0.3}},
+      {ticker:"GPN",name:"Global Payments",verdict:"short",currentPrice:95,prices:[52,65,80,98,115,135,160],sens:{rates:0.3,consumer:-0.2,regulation:0.4,flows:-0.3,fintech:-0.3}},
+      {ticker:"WU",name:"Western Union",verdict:"short",currentPrice:11,prices:[5,6.5,8.5,11,14,17,21],sens:{rates:0.2,consumer:-0.3,regulation:0.3,flows:-0.7,fintech:-0.5}}
     ]
   },
   {
-    id:"oz", name:"Oz", fullName:"Mark 'Oz' Geist", teamId:"healthcare",
-    team:"Healthcare & Biotech", color:"#f472b6", icon:"🧬", file:"oz-v2.html",
+    id:"oz", name:"Oz", fullName:"Mark 'Oz' Geist",
+    category:"GRS", team:"Healthcare & Biotech", color:"#f472b6", icon:"🧬",
     desc:"GLP-1 & Innovation Pipeline",
-    driverMap:[
-      {driverId:"o_glp1",weight:25},{driverId:"o_pipeline",weight:20},{driverId:"o_pricing",weight:20},
-      {driverId:"o_rates",weight:10},{driverId:"o_ma",weight:15},{driverId:"o_aging",weight:10},
-    ],
-    drivers:[
-      {id:"o_glp1",label:"GLP-1/Obesity Momentum",signal:0.6},
-      {id:"o_pipeline",label:"Pipeline/FDA Catalysts",signal:0.4},
-      {id:"o_pricing",label:"Drug Pricing Pressure",signal:-0.4},
-      {id:"o_rates",label:"Rate Environment",signal:-0.2},
-      {id:"o_ma",label:"M&A / Dealmaking",signal:0.3},
-      {id:"o_aging",label:"Demographics/Aging",signal:0.5},
+    macroMap:[
+      {macroId:"healthcare",weight:35},
+      {macroId:"regulation",weight:20},
+      {macroId:"rates",weight:10},
+      {macroId:"flows",weight:15},
+      {macroId:"consumer",weight:20}
     ],
     stocks:[
-      {ticker:"LLY",name:"Eli Lilly",verdict:"long",currentPrice:920,prices:[580,680,800,985,1150,1350,1600],sens:{o_glp1:.9,o_pipeline:.7,o_pricing:-.4,o_rates:-.2,o_ma:.3,o_aging:.6}},
-      {ticker:"ISRG",name:"Intuitive Surgical",verdict:"long",currentPrice:580,prices:[340,410,500,625,740,880,1050],sens:{o_glp1:.2,o_pipeline:.5,o_pricing:-.2,o_rates:-.3,o_ma:.4,o_aging:.8}},
-      {ticker:"VRTX",name:"Vertex Pharma",verdict:"long",currentPrice:455,prices:[280,340,400,490,570,670,800],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.2,o_ma:.5,o_aging:.4}},
-      {ticker:"REGN",name:"Regeneron",verdict:"long",currentPrice:710,prices:[440,530,630,760,880,1030,1220],sens:{o_glp1:.2,o_pipeline:.7,o_pricing:-.3,o_rates:-.1,o_ma:.4,o_aging:.5}},
-      {ticker:"TMO",name:"Thermo Fisher",verdict:"long",currentPrice:540,prices:[340,410,480,575,665,780,920],sens:{o_glp1:.3,o_pipeline:.4,o_pricing:-.1,o_rates:-.3,o_ma:.6,o_aging:.6}},
-      {ticker:"DXCM",name:"DexCom",verdict:"long",currentPrice:82,prices:[38,52,68,90,115,145,185],sens:{o_glp1:.7,o_pipeline:.5,o_pricing:-.3,o_rates:-.4,o_ma:.3,o_aging:.7}},
-      {ticker:"ARGX",name:"argenx",verdict:"long",currentPrice:680,prices:[350,450,570,730,880,1060,1300],sens:{o_glp1:.1,o_pipeline:.9,o_pricing:-.2,o_rates:-.3,o_ma:.6,o_aging:.3}},
-      {ticker:"ALNY",name:"Alnylam Pharma",verdict:"long",currentPrice:265,prices:[130,175,225,290,355,430,530],sens:{o_glp1:.1,o_pipeline:.8,o_pricing:-.3,o_rates:-.3,o_ma:.5,o_aging:.4}},
-      {ticker:"NVO",name:"Novo Nordisk",verdict:"short",currentPrice:50,prices:[25,32,40,52,65,82,105],sens:{o_glp1:-.4,o_pipeline:-.3,o_pricing:.5,o_rates:.2,o_ma:-.2,o_aging:-.1}},
-      {ticker:"UNH",name:"UnitedHealth",verdict:"short",currentPrice:470,prices:[280,340,410,485,560,640,740],sens:{o_glp1:-.3,o_pipeline:-.1,o_pricing:.6,o_rates:.3,o_ma:-.2,o_aging:.3}},
-      {ticker:"PFE",name:"Pfizer",verdict:"short",currentPrice:26,prices:[14,18,22,27,32,38,46],sens:{o_glp1:-.2,o_pipeline:-.4,o_pricing:.4,o_rates:.3,o_ma:-.3,o_aging:-.2}},
-      {ticker:"MRNA",name:"Moderna",verdict:"short",currentPrice:32,prices:[12,18,25,34,48,68,95],sens:{o_glp1:-.1,o_pipeline:-.5,o_pricing:.3,o_rates:.4,o_ma:-.2,o_aging:-.3}},
-      {ticker:"CVS",name:"CVS Health",verdict:"short",currentPrice:56,prices:[32,40,48,58,68,80,95],sens:{o_glp1:-.2,o_pipeline:-.1,o_pricing:.6,o_rates:.2,o_ma:-.3,o_aging:.2}},
+      {ticker:"LLY",name:"Eli Lilly",verdict:"long",currentPrice:920,prices:[580,680,800,985,1150,1350,1600],sens:{regulation:-0.4,rates:-0.2,flows:0.3,consumer:0.6,healthcare:0.8}},
+      {ticker:"ISRG",name:"Intuitive Surgical",verdict:"long",currentPrice:580,prices:[340,410,500,625,740,880,1050],sens:{regulation:-0.2,rates:-0.3,flows:0.4,consumer:0.8,healthcare:0.4}},
+      {ticker:"VRTX",name:"Vertex Pharma",verdict:"long",currentPrice:455,prices:[280,340,400,490,570,670,800],sens:{regulation:-0.3,rates:-0.2,flows:0.5,consumer:0.4,healthcare:0.5}},
+      {ticker:"REGN",name:"Regeneron",verdict:"long",currentPrice:710,prices:[440,530,630,760,880,1030,1220],sens:{regulation:-0.3,rates:-0.1,flows:0.4,consumer:0.5,healthcare:0.5}},
+      {ticker:"TMO",name:"Thermo Fisher",verdict:"long",currentPrice:540,prices:[340,410,480,575,665,780,920],sens:{regulation:-0.1,rates:-0.3,flows:0.6,consumer:0.6,healthcare:0.4}},
+      {ticker:"DXCM",name:"DexCom",verdict:"long",currentPrice:82,prices:[38,52,68,90,115,145,185],sens:{regulation:-0.3,rates:-0.4,flows:0.3,consumer:0.7,healthcare:0.6}},
+      {ticker:"ARGX",name:"argenx",verdict:"long",currentPrice:680,prices:[350,450,570,730,880,1060,1300],sens:{regulation:-0.2,rates:-0.3,flows:0.6,consumer:0.3,healthcare:0.5}},
+      {ticker:"ALNY",name:"Alnylam Pharma",verdict:"long",currentPrice:265,prices:[130,175,225,290,355,430,530],sens:{regulation:-0.3,rates:-0.3,flows:0.5,consumer:0.4,healthcare:0.5}},
+      {ticker:"NVO",name:"Novo Nordisk",verdict:"short",currentPrice:50,prices:[25,32,40,52,65,82,105],sens:{regulation:0.5,rates:0.2,flows:-0.2,consumer:-0.1,healthcare:-0.3}},
+      {ticker:"UNH",name:"UnitedHealth",verdict:"short",currentPrice:470,prices:[280,340,410,485,560,640,740],sens:{regulation:0.6,rates:0.3,flows:-0.2,consumer:0.3,healthcare:-0.2}},
+      {ticker:"PFE",name:"Pfizer",verdict:"short",currentPrice:26,prices:[14,18,22,27,32,38,46],sens:{regulation:0.4,rates:0.3,flows:-0.3,consumer:-0.2,healthcare:-0.3}},
+      {ticker:"MRNA",name:"Moderna",verdict:"short",currentPrice:32,prices:[12,18,25,34,48,68,95],sens:{regulation:0.3,rates:0.4,flows:-0.2,consumer:-0.3,healthcare:-0.3}},
+      {ticker:"CVS",name:"CVS Health",verdict:"short",currentPrice:56,prices:[32,40,48,58,68,80,95],sens:{regulation:0.6,rates:0.2,flows:-0.3,consumer:0.2,healthcare:-0.2}}
     ]
   },
-  // ═══════════════ PAN ASIAN THEMATIC ═══════════════
   {
-    id:"ipm", name:"Ip Man", fullName:"Ip Man (葉問)", teamId:"panasian",
-    team:"Pan Asian Thematic", color:"#ff6b35", icon:"🐉", file:"ipm-v1.html",
+    id:"ipm", name:"Ip Man", fullName:"Ip Man (葉問)",
+    category:"Asian GRS", team:"Pan Asian Thematic", color:"#ff6b35", icon:"🐉",
     desc:"15-5 Plan · CNY Appreciation · Capital Account Opening",
-    driverMap:[
-      {driverId:"ipm_cny",weight:25},{driverId:"ipm_155plan",weight:20},{driverId:"ipm_capital",weight:20},
-      {driverId:"ipm_wmp",weight:15},{driverId:"ipm_consumer",weight:10},{driverId:"ipm_geopol",weight:10},
-    ],
-    drivers:[
-      {id:"ipm_cny",label:"CNY Appreciation (7.20→6.00)",signal:0.6},
-      {id:"ipm_155plan",label:"15-5 Plan Alignment",signal:0.7},
-      {id:"ipm_capital",label:"Capital Account Opening",signal:0.5},
-      {id:"ipm_wmp",label:"WMP → Equity Reallocation",signal:0.4},
-      {id:"ipm_consumer",label:"Consumer Recovery",signal:0.3},
-      {id:"ipm_geopol",label:"Geopolitical Risk",signal:-0.3},
+    macroMap:[
+      {macroId:"fx",weight:25},
+      {macroId:"china",weight:20},
+      {macroId:"flows",weight:25},
+      {macroId:"consumer",weight:15},
+      {macroId:"geopol",weight:15}
     ],
     stocks:[
-      {ticker:"1801.HK",name:"Innovent Biologics",verdict:"long",currentPrice:84,prices:[42,55,68,92,112,138,175],sens:{ipm_cny:.6,ipm_155plan:.9,ipm_capital:.4,ipm_wmp:.5,ipm_consumer:.3,ipm_geopol:-.4}},
-      {ticker:"2269.HK",name:"WuXi Biologics",verdict:"long",currentPrice:40.5,prices:[20,26,33,44,54,66,82],sens:{ipm_cny:.5,ipm_155plan:.8,ipm_capital:.5,ipm_wmp:.4,ipm_consumer:.2,ipm_geopol:-.6}},
-      {ticker:"300760.SZ",name:"Mindray Medical",verdict:"long",currentPrice:186,prices:[105,130,158,205,245,295,360],sens:{ipm_cny:.4,ipm_155plan:.8,ipm_capital:.3,ipm_wmp:.5,ipm_consumer:.6,ipm_geopol:-.2}},
-      {ticker:"1211.HK",name:"BYD",verdict:"long",currentPrice:90,prices:[48,60,75,98,120,148,185],sens:{ipm_cny:.7,ipm_155plan:.7,ipm_capital:.3,ipm_wmp:.4,ipm_consumer:.7,ipm_geopol:-.5}},
-      {ticker:"3750.HK",name:"CATL",verdict:"long",currentPrice:532,prices:[290,360,445,575,680,810,1000],sens:{ipm_cny:.6,ipm_155plan:.9,ipm_capital:.4,ipm_wmp:.3,ipm_consumer:.2,ipm_geopol:-.3}},
-      {ticker:"0700.HK",name:"Tencent",verdict:"long",currentPrice:533,prices:[310,380,460,575,680,800,960],sens:{ipm_cny:.5,ipm_155plan:.5,ipm_capital:.6,ipm_wmp:.7,ipm_consumer:.8,ipm_geopol:-.4}},
-      {ticker:"9988.HK",name:"Alibaba",verdict:"long",currentPrice:155,prices:[82,105,130,170,210,260,325],sens:{ipm_cny:.5,ipm_155plan:.4,ipm_capital:.7,ipm_wmp:.6,ipm_consumer:.7,ipm_geopol:-.5}},
-      {ticker:"3690.HK",name:"Meituan",verdict:"short",currentPrice:82,prices:[42,55,68,85,105,130,165],sens:{ipm_cny:-.2,ipm_155plan:-.3,ipm_capital:.2,ipm_wmp:.3,ipm_consumer:-.6,ipm_geopol:.2}},
-      {ticker:"0175.HK",name:"Geely Auto",verdict:"short",currentPrice:16,prices:[6.5,9,12,15.5,19.5,24,30],sens:{ipm_cny:-.4,ipm_155plan:-.5,ipm_capital:.1,ipm_wmp:.2,ipm_consumer:-.4,ipm_geopol:.3}},
-      {ticker:"601012.SH",name:"LONGi Green Energy",verdict:"short",currentPrice:18,prices:[6,9,13,17,22,28,36],sens:{ipm_cny:-.3,ipm_155plan:.2,ipm_capital:-.1,ipm_wmp:.1,ipm_consumer:-.2,ipm_geopol:.4}},
-      {ticker:"2382.HK",name:"Sunny Optical",verdict:"short",currentPrice:65,prices:[28,38,50,63,78,96,120],sens:{ipm_cny:-.3,ipm_155plan:-.2,ipm_capital:.1,ipm_wmp:.2,ipm_consumer:-.5,ipm_geopol:.5}},
+      {ticker:"1801.HK",name:"Innovent Biologics",verdict:"long",currentPrice:84,prices:[42,55,68,92,112,138,175],sens:{fx:0.6,china:0.9,consumer:0.3,geopol:-0.4,flows:0.5}},
+      {ticker:"2269.HK",name:"WuXi Biologics",verdict:"long",currentPrice:40.5,prices:[20,26,33,44,54,66,82],sens:{fx:0.5,china:0.8,consumer:0.2,geopol:-0.6,flows:0.5}},
+      {ticker:"300760.SZ",name:"Mindray Medical",verdict:"long",currentPrice:186,prices:[105,130,158,205,245,295,360],sens:{fx:0.4,china:0.8,consumer:0.6,geopol:-0.2,flows:0.4}},
+      {ticker:"1211.HK",name:"BYD",verdict:"long",currentPrice:90,prices:[48,60,75,98,120,148,185],sens:{fx:0.7,china:0.7,consumer:0.7,geopol:-0.5,flows:0.4}},
+      {ticker:"3750.HK",name:"CATL",verdict:"long",currentPrice:532,prices:[290,360,445,575,680,810,1000],sens:{fx:0.6,china:0.9,consumer:0.2,geopol:-0.3,flows:0.4}},
+      {ticker:"0700.HK",name:"Tencent",verdict:"long",currentPrice:533,prices:[310,380,460,575,680,800,960],sens:{fx:0.5,china:0.5,consumer:0.8,geopol:-0.4,flows:0.6}},
+      {ticker:"9988.HK",name:"Alibaba",verdict:"long",currentPrice:155,prices:[82,105,130,170,210,260,325],sens:{fx:0.5,china:0.4,consumer:0.7,geopol:-0.5,flows:0.6}},
+      {ticker:"3690.HK",name:"Meituan",verdict:"short",currentPrice:82,prices:[42,55,68,85,105,130,165],sens:{fx:-0.2,china:-0.3,consumer:-0.6,geopol:0.2,flows:0.3}},
+      {ticker:"0175.HK",name:"Geely Auto",verdict:"short",currentPrice:16,prices:[6.5,9,12,15.5,19.5,24,30],sens:{fx:-0.4,china:-0.5,consumer:-0.4,geopol:0.3,flows:0.2}},
+      {ticker:"601012.SH",name:"LONGi Green Energy",verdict:"short",currentPrice:18,prices:[6,9,13,17,22,28,36],sens:{fx:-0.3,china:0.2,consumer:-0.2,geopol:0.4,flows:0}},
+      {ticker:"2382.HK",name:"Sunny Optical",verdict:"short",currentPrice:65,prices:[28,38,50,63,78,96,120],sens:{fx:-0.3,china:-0.2,consumer:-0.5,geopol:0.5,flows:0.2}}
     ]
   },
   {
-    id:"miu", name:"Miura", fullName:"Miura (三浦)", teamId:"panasian",
-    team:"Pan Asian Thematic", color:"#e11d48", icon:"⛩️", file:"miu-v1.html",
+    id:"miu", name:"Miura", fullName:"Miura (三浦)",
+    category:"Asian GRS", team:"Pan Asian Thematic", color:"#e11d48", icon:"⛩️",
     desc:"JPY Appreciation · Foreign Inflows · Takaichi Admin · Defence Buildup",
-    driverMap:[
-      {driverId:"miu_jpy",weight:25},{driverId:"miu_inflows",weight:20},{driverId:"miu_admin",weight:20},
-      {driverId:"miu_china",weight:15},{driverId:"miu_rates",weight:10},{driverId:"miu_defence",weight:10},
-    ],
-    drivers:[
-      {id:"miu_jpy",label:"JPY Appreciation (150→125)",signal:0.6},
-      {id:"miu_inflows",label:"Foreign Capital Inflows",signal:0.5},
-      {id:"miu_admin",label:"Takaichi Admin Agenda",signal:0.5},
-      {id:"miu_china",label:"China Hawkishness",signal:-0.3},
-      {id:"miu_rates",label:"BOJ Rate Normalisation",signal:0.4},
-      {id:"miu_defence",label:"Defence Spending Uplift",signal:0.6},
+    macroMap:[
+      {macroId:"fx",weight:25},
+      {macroId:"flows",weight:20},
+      {macroId:"reform",weight:20},
+      {macroId:"china",weight:15},
+      {macroId:"rates",weight:10},
+      {macroId:"defence",weight:10}
     ],
     stocks:[
-      {ticker:"8306.T",name:"Mitsubishi UFJ",verdict:"long",currentPrice:2877,prices:[1600,2000,2450,3100,3650,4300,5200],sens:{miu_jpy:.7,miu_inflows:.8,miu_admin:.5,miu_china:-.2,miu_rates:.9,miu_defence:.1}},
-      {ticker:"8035.T",name:"Tokyo Electron",verdict:"long",currentPrice:42150,prices:[22000,28000,35000,45000,55000,68000,85000],sens:{miu_jpy:.3,miu_inflows:.7,miu_admin:.4,miu_china:-.4,miu_rates:.2,miu_defence:.1}},
-      {ticker:"7012.T",name:"Kawasaki Heavy",verdict:"long",currentPrice:16940,prices:[8500,11000,14000,18500,23000,29000,37000],sens:{miu_jpy:.3,miu_inflows:.4,miu_admin:.7,miu_china:.5,miu_rates:.1,miu_defence:.9}},
-      {ticker:"7011.T",name:"Mitsubishi Heavy",verdict:"long",currentPrice:4820,prices:[2500,3200,4000,5200,6400,7800,9500],sens:{miu_jpy:.3,miu_inflows:.5,miu_admin:.6,miu_china:.4,miu_rates:.1,miu_defence:.9}},
-      {ticker:"9984.T",name:"SoftBank Group",verdict:"long",currentPrice:4449,prices:[2200,2900,3700,4800,6000,7500,9500],sens:{miu_jpy:.4,miu_inflows:.8,miu_admin:.3,miu_china:-.3,miu_rates:.2,miu_defence:0}},
-      {ticker:"6098.T",name:"Recruit Holdings",verdict:"long",currentPrice:10200,prices:[5500,7000,8600,11000,13500,16500,20000],sens:{miu_jpy:.5,miu_inflows:.6,miu_admin:.5,miu_china:-.1,miu_rates:.3,miu_defence:0}},
-      {ticker:"6146.T",name:"DISCO Corp",verdict:"long",currentPrice:48000,prices:[25000,32000,40000,52000,65000,82000,105000],sens:{miu_jpy:.3,miu_inflows:.7,miu_admin:.3,miu_china:-.3,miu_rates:.2,miu_defence:0}},
-      {ticker:"7203.T",name:"Toyota Motor",verdict:"short",currentPrice:3200,prices:[1500,2000,2600,3100,3800,4600,5600],sens:{miu_jpy:-.8,miu_inflows:.2,miu_admin:-.3,miu_china:-.4,miu_rates:-.2,miu_defence:0}},
-      {ticker:"6752.T",name:"Panasonic",verdict:"short",currentPrice:1800,prices:[850,1100,1450,1750,2150,2600,3200],sens:{miu_jpy:-.5,miu_inflows:.1,miu_admin:-.2,miu_china:-.3,miu_rates:-.3,miu_defence:0}},
-      {ticker:"7267.T",name:"Honda Motor",verdict:"short",currentPrice:1550,prices:[750,950,1250,1500,1850,2250,2800],sens:{miu_jpy:-.7,miu_inflows:.1,miu_admin:-.2,miu_china:-.5,miu_rates:-.2,miu_defence:0}},
-      {ticker:"8058.T",name:"Mitsubishi Corp",verdict:"short",currentPrice:3787,prices:[1900,2400,3100,3700,4500,5400,6600],sens:{miu_jpy:-.5,miu_inflows:.3,miu_admin:-.1,miu_china:-.3,miu_rates:-.1,miu_defence:.2}},
+      {ticker:"8306.T",name:"Mitsubishi UFJ",verdict:"long",currentPrice:2877,prices:[1600,2000,2450,3100,3650,4300,5200],sens:{fx:0.7,flows:0.8,reform:0.5,china:-0.2,rates:0.9,defence:0.1}},
+      {ticker:"8035.T",name:"Tokyo Electron",verdict:"long",currentPrice:42150,prices:[22000,28000,35000,45000,55000,68000,85000],sens:{fx:0.3,flows:0.7,reform:0.4,china:-0.4,rates:0.2,defence:0.1}},
+      {ticker:"7012.T",name:"Kawasaki Heavy",verdict:"long",currentPrice:16940,prices:[8500,11000,14000,18500,23000,29000,37000],sens:{fx:0.3,flows:0.4,reform:0.7,china:0.5,rates:0.1,defence:0.9}},
+      {ticker:"7011.T",name:"Mitsubishi Heavy",verdict:"long",currentPrice:4820,prices:[2500,3200,4000,5200,6400,7800,9500],sens:{fx:0.3,flows:0.5,reform:0.6,china:0.4,rates:0.1,defence:0.9}},
+      {ticker:"9984.T",name:"SoftBank Group",verdict:"long",currentPrice:4449,prices:[2200,2900,3700,4800,6000,7500,9500],sens:{fx:0.4,flows:0.8,reform:0.3,china:-0.3,rates:0.2,defence:0}},
+      {ticker:"6098.T",name:"Recruit Holdings",verdict:"long",currentPrice:10200,prices:[5500,7000,8600,11000,13500,16500,20000],sens:{fx:0.5,flows:0.6,reform:0.5,china:-0.1,rates:0.3,defence:0}},
+      {ticker:"6146.T",name:"DISCO Corp",verdict:"long",currentPrice:48000,prices:[25000,32000,40000,52000,65000,82000,105000],sens:{fx:0.3,flows:0.7,reform:0.3,china:-0.3,rates:0.2,defence:0}},
+      {ticker:"7203.T",name:"Toyota Motor",verdict:"short",currentPrice:3200,prices:[1500,2000,2600,3100,3800,4600,5600],sens:{fx:-0.8,flows:0.2,reform:-0.3,china:-0.4,rates:-0.2,defence:0}},
+      {ticker:"6752.T",name:"Panasonic",verdict:"short",currentPrice:1800,prices:[850,1100,1450,1750,2150,2600,3200],sens:{fx:-0.5,flows:0.1,reform:-0.2,china:-0.3,rates:-0.3,defence:0}},
+      {ticker:"7267.T",name:"Honda Motor",verdict:"short",currentPrice:1550,prices:[750,950,1250,1500,1850,2250,2800],sens:{fx:-0.7,flows:0.1,reform:-0.2,china:-0.5,rates:-0.2,defence:0}},
+      {ticker:"8058.T",name:"Mitsubishi Corp",verdict:"short",currentPrice:3787,prices:[1900,2400,3100,3700,4500,5400,6600],sens:{fx:-0.5,flows:0.3,reform:-0.1,china:-0.3,rates:-0.1,defence:0.2}}
     ]
   },
   {
-    id:"ctc", name:"Cheung Tin-chi", fullName:"Cheung Tin-chi (張天志)", teamId:"panasian",
-    team:"Pan Asian Thematic", color:"#0ea5e9", icon:"🔬", file:"ctc-v1.html",
+    id:"ctc", name:"Cheung Tin-chi", fullName:"Cheung Tin-chi (張天志)",
+    category:"Asian GRS", team:"Pan Asian Thematic", color:"#0ea5e9", icon:"🔬",
     desc:"Semiconductor Dominance · TWD Risk · Domestic Wealth · Geopolitical Premium",
-    driverMap:[
-      {driverId:"ctc_semi",weight:30},{driverId:"ctc_twd",weight:20},{driverId:"ctc_wealth",weight:15},
-      {driverId:"ctc_geopol",weight:15},{driverId:"ctc_ai",weight:10},{driverId:"ctc_rates",weight:10},
-    ],
-    drivers:[
-      {id:"ctc_semi",label:"Semiconductor Dominance",signal:0.8},
-      {id:"ctc_twd",label:"TWD Appreciation Risk",signal:-0.2},
-      {id:"ctc_wealth",label:"Domestic Wealth Growth",signal:0.4},
-      {id:"ctc_geopol",label:"Geopolitical Risk (Cross-Strait)",signal:-0.4},
-      {id:"ctc_ai",label:"AI Capex Demand",signal:0.7},
-      {id:"ctc_rates",label:"Global Rate Environment",signal:0.2},
+    macroMap:[
+      {macroId:"semi",weight:30},
+      {macroId:"fx",weight:20},
+      {macroId:"flows",weight:15},
+      {macroId:"geopol",weight:15},
+      {macroId:"ai",weight:10},
+      {macroId:"rates",weight:10}
     ],
     stocks:[
-      {ticker:"2330.TW",name:"TSMC",verdict:"long",currentPrice:1915,prices:[1050,1300,1600,2050,2500,3050,3800],sens:{ctc_semi:.9,ctc_twd:-.2,ctc_wealth:.3,ctc_geopol:-.6,ctc_ai:.9,ctc_rates:.2}},
-      {ticker:"2454.TW",name:"MediaTek",verdict:"long",currentPrice:1855,prices:[1000,1250,1550,2000,2450,3000,3700],sens:{ctc_semi:.8,ctc_twd:-.1,ctc_wealth:.2,ctc_geopol:-.3,ctc_ai:.8,ctc_rates:.2}},
-      {ticker:"3711.TW",name:"ASE Technology",verdict:"long",currentPrice:293,prices:[155,195,245,315,385,470,580],sens:{ctc_semi:.8,ctc_twd:-.2,ctc_wealth:.1,ctc_geopol:-.3,ctc_ai:.7,ctc_rates:.1}},
-      {ticker:"2308.TW",name:"Delta Electronics",verdict:"long",currentPrice:420,prices:[220,280,350,450,560,690,850],sens:{ctc_semi:.5,ctc_twd:-.1,ctc_wealth:.3,ctc_geopol:-.2,ctc_ai:.6,ctc_rates:.2}},
-      {ticker:"6488.TW",name:"GlobalWafers",verdict:"long",currentPrice:550,prices:[280,360,460,590,730,900,1120],sens:{ctc_semi:.9,ctc_twd:-.1,ctc_wealth:.1,ctc_geopol:-.3,ctc_ai:.7,ctc_rates:.1}},
-      {ticker:"3008.TW",name:"LARGAN Precision",verdict:"long",currentPrice:2600,prices:[1400,1800,2200,2800,3400,4200,5200],sens:{ctc_semi:.6,ctc_twd:-.2,ctc_wealth:.2,ctc_geopol:-.2,ctc_ai:.4,ctc_rates:.1}},
-      {ticker:"2882.TW",name:"Cathay Financial",verdict:"short",currentPrice:78,prices:[38,50,63,76,92,112,138],sens:{ctc_semi:.1,ctc_twd:-.8,ctc_wealth:.3,ctc_geopol:-.2,ctc_ai:0,ctc_rates:-.7}},
-      {ticker:"2881.TW",name:"Fubon Financial",verdict:"short",currentPrice:95,prices:[48,62,78,93,115,140,172],sens:{ctc_semi:.1,ctc_twd:-.8,ctc_wealth:.3,ctc_geopol:-.2,ctc_ai:0,ctc_rates:-.7}},
-      {ticker:"2891.TW",name:"CTBC Financial",verdict:"short",currentPrice:42,prices:[20,26,34,41,50,62,76],sens:{ctc_semi:.1,ctc_twd:-.6,ctc_wealth:.2,ctc_geopol:-.2,ctc_ai:0,ctc_rates:-.5}},
-      {ticker:"2303.TW",name:"United Micro",verdict:"short",currentPrice:62,prices:[30,40,52,61,74,90,110],sens:{ctc_semi:.3,ctc_twd:-.3,ctc_wealth:.1,ctc_geopol:-.3,ctc_ai:-.2,ctc_rates:.1}},
+      {ticker:"2330.TW",name:"TSMC",verdict:"long",currentPrice:1915,prices:[1050,1300,1600,2050,2500,3050,3800],sens:{semi:0.9,fx:-0.2,flows:0.3,geopol:-0.6,ai:0.9,rates:0.2}},
+      {ticker:"2454.TW",name:"MediaTek",verdict:"long",currentPrice:1855,prices:[1000,1250,1550,2000,2450,3000,3700],sens:{semi:0.8,fx:-0.1,flows:0.2,geopol:-0.3,ai:0.8,rates:0.2}},
+      {ticker:"3711.TW",name:"ASE Technology",verdict:"long",currentPrice:293,prices:[155,195,245,315,385,470,580],sens:{semi:0.8,fx:-0.2,flows:0.1,geopol:-0.3,ai:0.7,rates:0.1}},
+      {ticker:"2308.TW",name:"Delta Electronics",verdict:"long",currentPrice:420,prices:[220,280,350,450,560,690,850],sens:{semi:0.5,fx:-0.1,flows:0.3,geopol:-0.2,ai:0.6,rates:0.2}},
+      {ticker:"6488.TW",name:"GlobalWafers",verdict:"long",currentPrice:550,prices:[280,360,460,590,730,900,1120],sens:{semi:0.9,fx:-0.1,flows:0.1,geopol:-0.3,ai:0.7,rates:0.1}},
+      {ticker:"3008.TW",name:"LARGAN Precision",verdict:"long",currentPrice:2600,prices:[1400,1800,2200,2800,3400,4200,5200],sens:{semi:0.6,fx:-0.2,flows:0.2,geopol:-0.2,ai:0.4,rates:0.1}},
+      {ticker:"2882.TW",name:"Cathay Financial",verdict:"short",currentPrice:78,prices:[38,50,63,76,92,112,138],sens:{semi:0.1,fx:-0.8,flows:0.3,geopol:-0.2,ai:0,rates:-0.7}},
+      {ticker:"2881.TW",name:"Fubon Financial",verdict:"short",currentPrice:95,prices:[48,62,78,93,115,140,172],sens:{semi:0.1,fx:-0.8,flows:0.3,geopol:-0.2,ai:0,rates:-0.7}},
+      {ticker:"2891.TW",name:"CTBC Financial",verdict:"short",currentPrice:42,prices:[20,26,34,41,50,62,76],sens:{semi:0.1,fx:-0.6,flows:0.2,geopol:-0.2,ai:0,rates:-0.5}},
+      {ticker:"2303.TW",name:"United Micro",verdict:"short",currentPrice:62,prices:[30,40,52,61,74,90,110],sens:{semi:0.3,fx:-0.3,flows:0.1,geopol:-0.3,ai:-0.2,rates:0.1}}
     ]
   },
   {
-    id:"wzh", name:"Wan Zonghua", fullName:"Wan Zonghua (萬宗華)", teamId:"panasian",
-    team:"Pan Asian Thematic", color:"#8b5cf6", icon:"⚔️", file:"wzh-v1.html",
+    id:"wzh", name:"Wan Zonghua", fullName:"Wan Zonghua (萬宗華)",
+    category:"Asian GRS", team:"Pan Asian Thematic", color:"#8b5cf6", icon:"⚔️",
     desc:"HBM Supercycle · Value-Up Programme · Regional Flows · K-Defence",
-    driverMap:[
-      {driverId:"wzh_semi",weight:25},{driverId:"wzh_valueup",weight:20},{driverId:"wzh_flows",weight:15},
-      {driverId:"wzh_china",weight:15},{driverId:"wzh_defence",weight:15},{driverId:"wzh_krw",weight:10},
-    ],
-    drivers:[
-      {id:"wzh_semi",label:"Semiconductor / HBM Supercycle",signal:0.7},
-      {id:"wzh_valueup",label:"Value-Up Programme",signal:0.5},
-      {id:"wzh_flows",label:"Regional Capital Flows",signal:0.4},
-      {id:"wzh_china",label:"China Exposure Risk",signal:-0.3},
-      {id:"wzh_defence",label:"K-Defence Exports",signal:0.5},
-      {id:"wzh_krw",label:"KRW Direction",signal:0.2},
+    macroMap:[
+      {macroId:"semi",weight:25},
+      {macroId:"reform",weight:20},
+      {macroId:"flows",weight:15},
+      {macroId:"china",weight:15},
+      {macroId:"defence",weight:15},
+      {macroId:"fx",weight:10}
     ],
     stocks:[
-      {ticker:"005930.KS",name:"Samsung Electronics",verdict:"long",currentPrice:181200,prices:[95000,120000,152000,195000,240000,300000,380000],sens:{wzh_semi:.9,wzh_valueup:.6,wzh_flows:.5,wzh_china:-.3,wzh_defence:0,wzh_krw:.3}},
-      {ticker:"000660.KS",name:"SK Hynix",verdict:"long",currentPrice:880000,prices:[450000,580000,730000,950000,1180000,1460000,1850000],sens:{wzh_semi:.9,wzh_valueup:.4,wzh_flows:.5,wzh_china:-.2,wzh_defence:0,wzh_krw:.3}},
-      {ticker:"105560.KS",name:"KB Financial",verdict:"long",currentPrice:167900,prices:[88000,110000,140000,180000,225000,280000,350000],sens:{wzh_semi:.1,wzh_valueup:.9,wzh_flows:.6,wzh_china:-.1,wzh_defence:0,wzh_krw:.4}},
-      {ticker:"035420.KS",name:"Naver",verdict:"long",currentPrice:252500,prices:[130000,165000,210000,270000,340000,420000,530000],sens:{wzh_semi:.3,wzh_valueup:.3,wzh_flows:.5,wzh_china:-.2,wzh_defence:0,wzh_krw:.2}},
-      {ticker:"012450.KS",name:"Hanwha Aerospace",verdict:"long",currentPrice:1105000,prices:[580000,720000,920000,1200000,1500000,1880000,2400000],sens:{wzh_semi:0,wzh_valueup:.3,wzh_flows:.4,wzh_china:.3,wzh_defence:.9,wzh_krw:.2}},
-      {ticker:"000270.KS",name:"Kia Corp",verdict:"long",currentPrice:164100,prices:[85000,108000,138000,175000,218000,270000,340000],sens:{wzh_semi:.1,wzh_valueup:.7,wzh_flows:.4,wzh_china:-.3,wzh_defence:0,wzh_krw:.3}},
-      {ticker:"005380.KS",name:"Hyundai Motor",verdict:"short",currentPrice:499000,prices:[250000,320000,410000,490000,600000,740000,920000],sens:{wzh_semi:0,wzh_valueup:-.5,wzh_flows:.2,wzh_china:-.3,wzh_defence:0,wzh_krw:-.3}},
-      {ticker:"010140.KS",name:"Samsung Heavy",verdict:"short",currentPrice:13500,prices:[5500,7500,10500,13000,16500,21000,27000],sens:{wzh_semi:0,wzh_valueup:-.3,wzh_flows:.1,wzh_china:-.4,wzh_defence:.2,wzh_krw:-.4}},
-      {ticker:"009540.KS",name:"HD Hyundai Heavy",verdict:"short",currentPrice:185000,prices:[85000,115000,150000,180000,225000,280000,355000],sens:{wzh_semi:0,wzh_valueup:-.2,wzh_flows:.1,wzh_china:-.3,wzh_defence:.3,wzh_krw:-.3}},
-      {ticker:"066570.KS",name:"LG Electronics",verdict:"short",currentPrice:92000,prices:[42000,56000,74000,90000,112000,140000,178000],sens:{wzh_semi:.2,wzh_valueup:-.4,wzh_flows:.1,wzh_china:-.4,wzh_defence:0,wzh_krw:-.2}},
+      {ticker:"005930.KS",name:"Samsung Electronics",verdict:"long",currentPrice:181200,prices:[95000,120000,152000,195000,240000,300000,380000],sens:{semi:0.9,reform:0.6,flows:0.5,china:-0.3,defence:0,fx:0.3}},
+      {ticker:"000660.KS",name:"SK Hynix",verdict:"long",currentPrice:880000,prices:[450000,580000,730000,950000,1180000,1460000,1850000],sens:{semi:0.9,reform:0.4,flows:0.5,china:-0.2,defence:0,fx:0.3}},
+      {ticker:"105560.KS",name:"KB Financial",verdict:"long",currentPrice:167900,prices:[88000,110000,140000,180000,225000,280000,350000],sens:{semi:0.1,reform:0.9,flows:0.6,china:-0.1,defence:0,fx:0.4}},
+      {ticker:"035420.KS",name:"Naver",verdict:"long",currentPrice:252500,prices:[130000,165000,210000,270000,340000,420000,530000],sens:{semi:0.3,reform:0.3,flows:0.5,china:-0.2,defence:0,fx:0.2}},
+      {ticker:"012450.KS",name:"Hanwha Aerospace",verdict:"long",currentPrice:1105000,prices:[580000,720000,920000,1200000,1500000,1880000,2400000],sens:{semi:0,reform:0.3,flows:0.4,china:0.3,defence:0.9,fx:0.2}},
+      {ticker:"000270.KS",name:"Kia Corp",verdict:"long",currentPrice:164100,prices:[85000,108000,138000,175000,218000,270000,340000],sens:{semi:0.1,reform:0.7,flows:0.4,china:-0.3,defence:0,fx:0.3}},
+      {ticker:"005380.KS",name:"Hyundai Motor",verdict:"short",currentPrice:499000,prices:[250000,320000,410000,490000,600000,740000,920000],sens:{semi:0,reform:-0.5,flows:0.2,china:-0.3,defence:0,fx:-0.3}},
+      {ticker:"010140.KS",name:"Samsung Heavy",verdict:"short",currentPrice:13500,prices:[5500,7500,10500,13000,16500,21000,27000],sens:{semi:0,reform:-0.3,flows:0.1,china:-0.4,defence:0.2,fx:-0.4}},
+      {ticker:"009540.KS",name:"HD Hyundai Heavy",verdict:"short",currentPrice:185000,prices:[85000,115000,150000,180000,225000,280000,355000],sens:{semi:0,reform:-0.2,flows:0.1,china:-0.3,defence:0.3,fx:-0.3}},
+      {ticker:"066570.KS",name:"LG Electronics",verdict:"short",currentPrice:92000,prices:[42000,56000,74000,90000,112000,140000,178000],sens:{semi:0.2,reform:-0.4,flows:0.1,china:-0.4,defence:0,fx:-0.2}}
     ]
   },
   {
-    id:"frk", name:"Frank", fullName:"Frank", teamId:"panasian",
-    team:"Pan Asian Thematic", color:"#14b8a6", icon:"🦁", file:"frk-v1.html",
+    id:"frk", name:"Frank", fullName:"Frank",
+    category:"Asian GRS", team:"Pan Asian Thematic", color:"#14b8a6", icon:"🦁",
     desc:"US-China Intermediary · Regional Capital Hub · ASEAN Growth · Financial Services",
-    driverMap:[
-      {driverId:"frk_uscn",weight:25},{driverId:"frk_hub",weight:20},{driverId:"frk_asean",weight:15},
-      {driverId:"frk_finserv",weight:15},{driverId:"frk_rates",weight:15},{driverId:"frk_sgd",weight:10},
-    ],
-    drivers:[
-      {id:"frk_uscn",label:"US-China Intermediary Role",signal:0.6},
-      {id:"frk_hub",label:"Regional Capital Hub",signal:0.7},
-      {id:"frk_asean",label:"ASEAN Growth Tailwind",signal:0.5},
-      {id:"frk_finserv",label:"Financial Services Demand",signal:0.5},
-      {id:"frk_rates",label:"Rate Environment",signal:0.3},
-      {id:"frk_sgd",label:"SGD Strength",signal:0.3},
+    macroMap:[
+      {macroId:"china",weight:25},
+      {macroId:"flows",weight:20},
+      {macroId:"consumer",weight:15},
+      {macroId:"fintech",weight:15},
+      {macroId:"rates",weight:15},
+      {macroId:"fx",weight:10}
     ],
     stocks:[
-      {ticker:"D05.SI",name:"DBS Group",verdict:"long",currentPrice:56.89,prices:[32,40,48,61,74,90,110],sens:{frk_uscn:.6,frk_hub:.8,frk_asean:.5,frk_finserv:.9,frk_rates:.6,frk_sgd:.4}},
-      {ticker:"O39.SI",name:"OCBC Bank",verdict:"long",currentPrice:21.11,prices:[12,15,18,23,28,34,42],sens:{frk_uscn:.5,frk_hub:.7,frk_asean:.5,frk_finserv:.8,frk_rates:.6,frk_sgd:.4}},
-      {ticker:"U11.SI",name:"UOB",verdict:"long",currentPrice:38.39,prices:[21,26,33,41,50,62,76],sens:{frk_uscn:.5,frk_hub:.7,frk_asean:.6,frk_finserv:.8,frk_rates:.5,frk_sgd:.3}},
-      {ticker:"A17U.SI",name:"CapitaLand Ascendas REIT",verdict:"long",currentPrice:2.71,prices:[1.50,1.90,2.35,2.90,3.50,4.20,5.10],sens:{frk_uscn:.4,frk_hub:.7,frk_asean:.6,frk_finserv:.3,frk_rates:-.4,frk_sgd:.2}},
-      {ticker:"BN4.SI",name:"Keppel Ltd",verdict:"long",currentPrice:7.50,prices:[4.00,5.00,6.30,8.10,10.00,12.30,15.20],sens:{frk_uscn:.5,frk_hub:.6,frk_asean:.7,frk_finserv:.3,frk_rates:-.2,frk_sgd:.2}},
-      {ticker:"SE",name:"Sea Ltd",verdict:"long",currentPrice:145,prices:[75,95,120,155,195,245,310],sens:{frk_uscn:.3,frk_hub:.4,frk_asean:.9,frk_finserv:.4,frk_rates:.2,frk_sgd:.1}},
-      {ticker:"Z74.SI",name:"Singtel",verdict:"short",currentPrice:4.84,prices:[2.50,3.20,4.00,4.80,5.80,7.00,8.50],sens:{frk_uscn:-.1,frk_hub:.2,frk_asean:.3,frk_finserv:.1,frk_rates:-.3,frk_sgd:-.2}},
-      {ticker:"C6L.SI",name:"Singapore Airlines",verdict:"short",currentPrice:7.00,prices:[3.50,4.50,5.80,6.90,8.40,10.20,12.50],sens:{frk_uscn:-.2,frk_hub:.3,frk_asean:.4,frk_finserv:0,frk_rates:-.2,frk_sgd:-.4}},
-      {ticker:"F34.SI",name:"Wilmar International",verdict:"short",currentPrice:3.20,prices:[1.60,2.10,2.70,3.15,3.85,4.70,5.80],sens:{frk_uscn:-.3,frk_hub:.1,frk_asean:.3,frk_finserv:0,frk_rates:-.1,frk_sgd:-.3}},
-      {ticker:"S68.SI",name:"SGX Ltd",verdict:"short",currentPrice:13.50,prices:[7.00,9.00,11.50,13.30,16.00,19.50,24.00],sens:{frk_uscn:.2,frk_hub:.4,frk_asean:.2,frk_finserv:.5,frk_rates:-.2,frk_sgd:.1}},
+      {ticker:"D05.SI",name:"DBS Group",verdict:"long",currentPrice:56.89,prices:[32,40,48,61,74,90,110],sens:{china:0.6,flows:0.8,consumer:0.5,fintech:0.9,rates:0.6,fx:0.4}},
+      {ticker:"O39.SI",name:"OCBC Bank",verdict:"long",currentPrice:21.11,prices:[12,15,18,23,28,34,42],sens:{china:0.5,flows:0.7,consumer:0.5,fintech:0.8,rates:0.6,fx:0.4}},
+      {ticker:"U11.SI",name:"UOB",verdict:"long",currentPrice:38.39,prices:[21,26,33,41,50,62,76],sens:{china:0.5,flows:0.7,consumer:0.6,fintech:0.8,rates:0.5,fx:0.3}},
+      {ticker:"A17U.SI",name:"CapitaLand Ascendas REIT",verdict:"long",currentPrice:2.71,prices:[1.5,1.9,2.35,2.9,3.5,4.2,5.1],sens:{china:0.4,flows:0.7,consumer:0.6,fintech:0.3,rates:-0.4,fx:0.2}},
+      {ticker:"BN4.SI",name:"Keppel Ltd",verdict:"long",currentPrice:7.5,prices:[4,5,6.3,8.1,10,12.3,15.2],sens:{china:0.5,flows:0.6,consumer:0.7,fintech:0.3,rates:-0.2,fx:0.2}},
+      {ticker:"SE",name:"Sea Ltd",verdict:"long",currentPrice:145,prices:[75,95,120,155,195,245,310],sens:{china:0.3,flows:0.4,consumer:0.9,fintech:0.4,rates:0.2,fx:0.1}},
+      {ticker:"Z74.SI",name:"Singtel",verdict:"short",currentPrice:4.84,prices:[2.5,3.2,4,4.8,5.8,7,8.5],sens:{china:-0.1,flows:0.2,consumer:0.3,fintech:0.1,rates:-0.3,fx:-0.2}},
+      {ticker:"C6L.SI",name:"Singapore Airlines",verdict:"short",currentPrice:7,prices:[3.5,4.5,5.8,6.9,8.4,10.2,12.5],sens:{china:-0.2,flows:0.3,consumer:0.4,fintech:0,rates:-0.2,fx:-0.4}},
+      {ticker:"F34.SI",name:"Wilmar International",verdict:"short",currentPrice:3.2,prices:[1.6,2.1,2.7,3.15,3.85,4.7,5.8],sens:{china:-0.3,flows:0.1,consumer:0.3,fintech:0,rates:-0.1,fx:-0.3}},
+      {ticker:"S68.SI",name:"SGX Ltd",verdict:"short",currentPrice:13.5,prices:[7,9,11.5,13.3,16,19.5,24],sens:{china:0.2,flows:0.4,consumer:0.2,fintech:0.5,rates:-0.2,fx:0.1}}
     ]
-  },
+  }
 ];
 
-/* ═══ PATCH: Apply saved snap prices directly into OPERATORS before React renders ═══ */
+/* ═══ PATCH: Apply saved snap prices into OPERATORS before React renders ═══ */
 (function() {
   const pm = window.XA_PRICES;
   if (pm && typeof pm === 'object') {
     let patched = 0;
     OPERATORS.forEach(function(op) {
       op.stocks.forEach(function(s) {
-        if (pm[s.ticker] != null) {
-          s.currentPrice = pm[s.ticker];
-          patched++;
-        }
+        if (pm[s.ticker] != null) { s.currentPrice = pm[s.ticker]; patched++; }
       });
     });
-    if (patched > 0) console.log('[XA patch] Patched ' + patched + ' stock prices into OPERATORS from saved snap');
+    if (patched > 0) console.log('[XA patch] Patched ' + patched + ' stock prices from saved snap');
   }
 })();
 
 /* ═══════════════ COMPUTE OPERATOR STATS ═══════════════ */
-function computeOpStats(op, globalDrivers) {
+function computeOpStats(op, masterMacros) {
   const results = op.stocks.map(s => {
-    const eng = runEngine(s, op.driverMap, globalDrivers);
+    const eng = runEngine(s, op.macroMap, masterMacros);
     return { ...s, eng };
   });
   const longs = results.filter(s => s.verdict === 'long');
@@ -477,14 +452,12 @@ function computeOpStats(op, globalDrivers) {
   const avgLongRR = longs.length ? longs.reduce((a,s) => a + (s.eng?.rr||0), 0) / longs.length : 0;
   const avgShortRR = shorts.length ? shorts.reduce((a,s) => a + (s.eng?.rr||0), 0) / shorts.length : 0;
   const avgSkew = results.length ? results.reduce((a,s) => a + (s.eng?.skew||0), 0) / results.length : 0;
-  const bullPct = globalDrivers.filter(d => op.drivers.some(od => od.id === d.id) && d.signal > 0.3).length;
-  const totalD = op.drivers.length;
   let regime = 'NEUTRAL';
   if (avgLongRR > 10) regime = 'BULLISH';
   if (avgLongRR > 20) regime = 'STRONG BULL';
   if (avgLongRR < -5) regime = 'BEARISH';
   if (avgLongRR < -15) regime = 'STRONG BEAR';
-  return { results, longs: longs.length, shorts: shorts.length, avgLongRR, avgShortRR, avgSkew, bullPct, totalD, regime };
+  return { results, longs: longs.length, shorts: shorts.length, avgLongRR, avgShortRR, avgSkew, regime };
 }
 
 /* ═══════════════ MICRO COMPONENTS ═══════════════ */
@@ -495,7 +468,7 @@ function Btn({children,onClick,active,color,style:sx,...p}){const c=color||'var(
 function Header({view, setView}) {
   const navItems = [
     {id:'overview', label:'Overview', icon:'◉'},
-    {id:'macro', label:'Macro Dashboard', icon:'⚡'},
+    {id:'macro', label:'Macro', icon:'⚡'},
     {id:'operators', label:'Operators', icon:'◆'},
     {id:'data', label:'Data', icon:'⬆'},
     {id:'export', label:'Export', icon:'↓'},
@@ -510,153 +483,238 @@ function Header({view, setView}) {
       {navItems.map(n => <button key={n.id} onClick={() => setView(n.id)} style={{
         padding:'14px 16px',fontSize:11,fontFamily:'var(--mono)',fontWeight:600,cursor:'pointer',
         border:'none',background:'transparent',color:view===n.id?'var(--fg)':'var(--fg4)',
-        borderBottom:view===n.id?'2px solid var(--g)':'2px solid transparent',
-        transition:'all .15s'
+        borderBottom:view===n.id?'2px solid var(--g)':'2px solid transparent',transition:'all .15s'
       }}>{n.icon} {n.label}</button>)}
     </div>
   </div>;
 }
 
 /* ═══════════════ OVERVIEW ═══════════════ */
-function OverviewView({operators, globalDrivers, setView}) {
-  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
+function OverviewView({operators, masterMacros, setView}) {
+  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, masterMacros)}));
   const totalNames = allStats.reduce((a,o) => a + o.stocks.length, 0);
   const totalLongs = allStats.reduce((a,o) => a + o.stats.longs, 0);
   const totalShorts = allStats.reduce((a,o) => a + o.stats.shorts, 0);
-  const totalDrivers = allStats.reduce((a,o) => a + o.drivers.length, 0);
   const bullOps = allStats.filter(o => o.stats.avgLongRR > 8).length;
+  const categories = ['GRS','Asian GRS'];
 
   return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
     <div style={{marginBottom:32}}>
       <h1 style={{fontSize:32,fontFamily:'var(--serif)',color:'var(--fg)',fontWeight:400,marginBottom:6}}>Command Centre</h1>
-      <p style={{fontSize:13,color:'var(--fg3)'}}>GRS · Pan Asian Thematic — {operators.length} operators across {new Set(operators.map(o=>o.team)).size} sectors</p>
+      <p style={{fontSize:13,color:'var(--fg3)'}}>GRS · Asian GRS — {operators.length} operators · {totalNames} stocks · {masterMacros.length} macro drivers</p>
     </div>
-
-    {/* Stats Row */}
     <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12,marginBottom:32}}>
       {[
         ['Operators', operators.length, 'var(--fg)'],
         ['Total Names', totalNames, 'var(--b)'],
         ['Longs', totalLongs, 'var(--g)'],
         ['Shorts', totalShorts, 'var(--r)'],
-        ['Macro Drivers', totalDrivers, 'var(--y)'],
+        ['Macro Drivers', masterMacros.length, 'var(--y)'],
         ['Bull Operators', bullOps+'/'+operators.length, 'var(--g2)'],
       ].map(([l,v,c]) => <div key={l} style={{padding:'16px 18px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
         <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>{l}</div>
         <div style={{fontSize:22,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
       </div>)}
     </div>
-
-    {/* Operator Cards */}
-    <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:12}}>Operator Status</div>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:14}}>
-      {allStats.map(op => {
-        const s = op.stats;
-        const regimeColor = s.regime.includes('BULL') ? 'var(--g)' : s.regime.includes('BEAR') ? 'var(--r)' : 'var(--fg3)';
-        return <div key={op.id} style={{background:'var(--bg2)',border:`1px solid ${op.color}20`,borderRadius:8,overflow:'hidden'}}>
-          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-              <div style={{display:'flex',alignItems:'center',gap:10}}>
-                <span style={{fontSize:20}}>{op.icon}</span>
-                <div>
-                  <span style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
-                  <span style={{fontSize:11,color:'var(--fg4)',marginLeft:8}}>{op.team}</span>
-                </div>
-              </div>
-              <Badge color={regimeColor} small>{s.regime}</Badge>
-            </div>
-            <div style={{fontSize:11,color:'var(--fg3)',marginBottom:8}}>{op.desc}</div>
-          </div>
-          <div style={{padding:'12px 20px',display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>L / S</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600}}><span style={{color:'var(--g)'}}>{s.longs}</span><span style={{color:'var(--fg4)'}}> / </span><span style={{color:'var(--r)'}}>{s.shorts}</span></div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg R/R</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgLongRR>0?'var(--g)':'var(--r)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
-          </div>
-          <div style={{padding:'8px 20px 14px'}}>
-            <div onClick={() => setView('operators')} style={{display:'block',textAlign:'center',padding:'8px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,textDecoration:'none',transition:'all .15s'}}>
-              Open {op.name} Engine →
-            </div>
-          </div>
-        </div>;
-      })}
-    </div>
-  </div>;
-}
-
-/* ═══════════════ MACRO DASHBOARD (Grouped by Operator) ═══════════════ */
-function MacroView({operators, globalDrivers, setGlobalDrivers}) {
-  const [collapsed, setCollapsed] = useState({});
-  const toggle = id => setCollapsed(p => ({...p, [id]: !p[id]}));
-
-  const updateSignal = (driverId, val) => {
-    setGlobalDrivers(p => p.map(d => d.id === driverId ? {...d, signal: val} : d));
-  };
-
-  const bullCount = globalDrivers.filter(d => d.signal > 0.3).length;
-  const bearCount = globalDrivers.filter(d => d.signal < -0.3).length;
-  const neutralCount = globalDrivers.length - bullCount - bearCount;
-
-  return <div style={{padding:32,maxWidth:1000,margin:'0 auto',animation:'fadeIn .3s ease'}}>
-    <div style={{marginBottom:28}}>
-      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400,marginBottom:6}}>Macro Dashboard</h1>
-      <p style={{fontSize:12,color:'var(--fg4)'}}>Adjust global signals. Changes flow through to all operator engines in real time.</p>
-    </div>
-
-    <div style={{display:'flex',gap:12,marginBottom:24}}>
-      <Badge color="var(--g)">{bullCount} Bull</Badge>
-      <Badge color="var(--fg3)">{neutralCount} Neutral</Badge>
-      <Badge color="var(--r)">{bearCount} Bear</Badge>
-      <span style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)',marginLeft:'auto'}}>{globalDrivers.length} drivers across {operators.length} operators</span>
-    </div>
-
-    {operators.map(op => {
-      const isCollapsed = collapsed[op.id];
-      const opDrivers = globalDrivers.filter(gd => op.drivers.some(od => od.id === gd.id));
-      const avgSig = opDrivers.length ? opDrivers.reduce((a,d) => a + d.signal, 0) / opDrivers.length : 0;
-      const avgColor = avgSig > 0.2 ? 'var(--g)' : avgSig < -0.2 ? 'var(--r)' : 'var(--fg3)';
-
-      return <div key={op.id} style={{marginBottom:12,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden'}}>
-        <div onClick={() => toggle(op.id)} style={{padding:'14px 20px',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:isCollapsed?'none':'1px solid var(--border)'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <span style={{fontSize:16}}>{op.icon}</span>
-            <span style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
-            <span style={{fontSize:11,color:'var(--fg4)'}}>{op.team}</span>
-          </div>
-          <div style={{display:'flex',alignItems:'center',gap:12}}>
-            <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:600,color:avgColor}}>avg: {avgSig>0?'+':''}{avgSig.toFixed(2)}</span>
-            <Badge color={op.color} small>{opDrivers.length} drivers</Badge>
-            <span style={{fontSize:14,color:'var(--fg4)',transition:'transform .2s',transform:isCollapsed?'rotate(-90deg)':'rotate(0)'}}>{isCollapsed ? '▸' : '▾'}</span>
-          </div>
+    {categories.map(cat => {
+      const catOps = allStats.filter(o => o.category === cat);
+      if (!catOps.length) return null;
+      return <div key={cat} style={{marginBottom:28}}>
+        <div style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+          <span>{cat}</span>
+          <span style={{flex:1,height:1,background:'var(--border)'}}/>
+          <span>{catOps.length} operators · {catOps.reduce((a,o)=>a+o.stocks.length,0)} stocks</span>
         </div>
-        {!isCollapsed && <div style={{padding:'8px 20px 16px'}}>
-          {opDrivers.map(d => {
-            const sc = d.signal > 0.3 ? 'var(--g)' : d.signal < -0.3 ? 'var(--r)' : 'var(--fg3)';
-            const sl = d.signal > 0.5 ? 'STRONG BULL' : d.signal > 0.2 ? 'BULLISH' : d.signal > -0.2 ? 'NEUTRAL' : d.signal > -0.5 ? 'BEARISH' : 'STRONG BEAR';
-            return <div key={d.id} style={{padding:'10px 0',borderBottom:'1px solid var(--border)',display:'grid',gridTemplateColumns:'200px 1fr 100px',gap:16,alignItems:'center'}}>
-              <div>
-                <div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{d.label}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:14}}>
+          {catOps.map(op => {
+            const s = op.stats;
+            const regimeColor = s.regime.includes('BULL') ? 'var(--g)' : s.regime.includes('BEAR') ? 'var(--r)' : 'var(--fg3)';
+            return <div key={op.id} style={{background:'var(--bg2)',border:`1px solid ${op.color}20`,borderRadius:8,overflow:'hidden'}}>
+              <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)'}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <span style={{fontSize:20}}>{op.icon}</span>
+                    <div>
+                      <span style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+                      <span style={{fontSize:11,color:'var(--fg4)',marginLeft:8}}>{op.team}</span>
+                    </div>
+                  </div>
+                  <Badge color={regimeColor} small>{s.regime}</Badge>
+                </div>
+                <div style={{fontSize:11,color:'var(--fg3)',marginBottom:4}}>{op.desc}</div>
               </div>
-              <div style={{display:'flex',alignItems:'center',gap:8}}>
-                <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--r)',width:16,textAlign:'right'}}>-1</span>
-                <input type="range" min="-100" max="100" value={Math.round(d.signal*100)} onChange={e => updateSignal(d.id, parseInt(e.target.value)/100)} style={{flex:1,accentColor:sc}}/>
-                <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--g)',width:16}}>+1</span>
+              <div style={{padding:'12px 20px',display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>L / S</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600}}><span style={{color:'var(--g)'}}>{s.longs}</span><span style={{color:'var(--fg4)'}}> / </span><span style={{color:'var(--r)'}}>{s.shorts}</span></div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg R/R</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgLongRR>0?'var(--g)':'var(--r)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
               </div>
-              <div style={{textAlign:'right'}}>
-                <span style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>{d.signal>0?'+':''}{d.signal.toFixed(2)}</span>
-                <div style={{fontSize:8,fontFamily:'var(--mono)',color:sc,marginTop:1}}>{sl}</div>
+              <div style={{padding:'8px 20px 14px'}}>
+                <div onClick={() => setView('operators')} style={{display:'block',textAlign:'center',padding:'8px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',border:`1px solid ${op.color}40`,background:`${op.color}08`,color:op.color,transition:'all .15s'}}>
+                  Open {op.name} Engine →
+                </div>
               </div>
             </div>;
           })}
-        </div>}
+        </div>
       </div>;
     })}
   </div>;
 }
 
+/* ═══════════════ MACRO DASHBOARD ═══════════════ */
+function MacroView({operators, masterMacros, setMasterMacros, opToggles, setOpToggles}) {
+  const [subTab, setSubTab] = useState('master'); /* 'master' or 'mapping' */
+  const [selOp, setSelOp] = useState(operators[0]?.id || '');
+
+  const updateSignal = (macroId, val) => {
+    setMasterMacros(p => p.map(m => m.id === macroId ? {...m, signal: val} : m));
+  };
+
+  const toggleOpMacro = (opId, macroId) => {
+    setOpToggles(p => {
+      const key = `${opId}__${macroId}`;
+      return {...p, [key]: p[key] === false ? true : (p[key] === true ? false : false)};
+    });
+  };
+
+  const isActive = (opId, macroId) => {
+    const key = `${opId}__${macroId}`;
+    return opToggles[key] !== false;
+  };
+
+  const bullCount = masterMacros.filter(d => d.signal > 0.3).length;
+  const bearCount = masterMacros.filter(d => d.signal < -0.3).length;
+  const neutralCount = masterMacros.length - bullCount - bearCount;
+
+  return <div style={{padding:32,maxWidth:1100,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:20}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400,marginBottom:6}}>Macro Dashboard</h1>
+      <p style={{fontSize:12,color:'var(--fg4)'}}>Set global macro conditions, then map them to operators with per-operator toggles.</p>
+    </div>
+
+    <div style={{display:'flex',gap:6,marginBottom:20}}>
+      <Btn active={subTab==='master'} color="var(--y)" onClick={() => setSubTab('master')}>⚡ Master Conditions</Btn>
+      <Btn active={subTab==='mapping'} color="var(--b)" onClick={() => setSubTab('mapping')}>🔗 Operator Mapping</Btn>
+      <span style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
+        <Badge color="var(--g)">{bullCount} Bull</Badge>
+        <Badge color="var(--fg3)">{neutralCount} Neutral</Badge>
+        <Badge color="var(--r)">{bearCount} Bear</Badge>
+      </span>
+    </div>
+
+    {subTab === 'master' && <div>
+      {MACRO_CATEGORIES.map(cat => {
+        const catMacros = masterMacros.filter(m => m.category === cat);
+        if (!catMacros.length) return null;
+        const opsUsing = (macroId) => operators.filter(op => op.macroMap.some(m => m.macroId === macroId && isActive(op.id, macroId))).length;
+        return <div key={cat} style={{marginBottom:20}}>
+          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:8,display:'flex',alignItems:'center',gap:8}}>
+            <span>{cat}</span><span style={{flex:1,height:1,background:'var(--border)'}}/>
+          </div>
+          {catMacros.map(m => {
+            const sc = m.signal > 0.3 ? 'var(--g)' : m.signal < -0.3 ? 'var(--r)' : 'var(--fg3)';
+            const sl = m.signal > 0.5 ? 'STRONG BULL' : m.signal > 0.2 ? 'BULLISH' : m.signal > -0.2 ? 'NEUTRAL' : m.signal > -0.5 ? 'BEARISH' : 'STRONG BEAR';
+            return <div key={m.id} style={{padding:'10px 16px',background:'var(--bg2)',borderRadius:6,marginBottom:4,display:'grid',gridTemplateColumns:'180px 1fr 60px 90px',gap:12,alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{m.label}</div>
+                <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{opsUsing(m.id)} operators</div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--r)',width:12,textAlign:'right'}}>-1</span>
+                <input type="range" min="-100" max="100" value={Math.round(m.signal*100)} onChange={e => updateSignal(m.id, parseInt(e.target.value)/100)} style={{flex:1,accentColor:sc}}/>
+                <span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--g)',width:12}}>+1</span>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <span style={{fontSize:13,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>{m.signal>0?'+':''}{m.signal.toFixed(2)}</span>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <span style={{fontSize:8,fontFamily:'var(--mono)',color:sc}}>{sl}</span>
+              </div>
+            </div>;
+          })}
+        </div>;
+      })}
+    </div>}
+
+    {subTab === 'mapping' && <div>
+      <div style={{display:'flex',gap:4,marginBottom:16,flexWrap:'wrap'}}>
+        {operators.map(op => <Btn key={op.id} active={selOp===op.id} color={op.color} onClick={() => setSelOp(op.id)}>
+          {op.icon} {op.name}
+        </Btn>)}
+      </div>
+      {(() => {
+        const op = operators.find(o => o.id === selOp);
+        if (!op) return null;
+        const activeMap = op.macroMap.filter(m => isActive(op.id, m.macroId));
+        const totalW = activeMap.reduce((a,m) => a + m.weight, 0);
+        const compositeSignal = activeMap.reduce((sum,m) => {
+          const mm = masterMacros.find(g => g.id === m.macroId);
+          return sum + ((mm?.signal||0) * m.weight / (totalW||1));
+        }, 0);
+        const compColor = compositeSignal > 0.15 ? 'var(--g)' : compositeSignal < -0.15 ? 'var(--r)' : 'var(--fg3)';
+
+        /* All master macros not already in this operator's macroMap */
+        const unmapped = masterMacros.filter(mm => !op.macroMap.some(m => m.macroId === mm.id));
+
+        return <div style={{background:'var(--bg2)',borderRadius:8,border:`1px solid ${op.color}20`,overflow:'hidden'}}>
+          <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:22}}>{op.icon}</span>
+              <div>
+                <span style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+                <span style={{fontSize:11,color:'var(--fg4)',marginLeft:8}}>{op.category} · {op.team}</span>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:12,alignItems:'center'}}>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',textTransform:'uppercase'}}>Composite</div>
+                <div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:compColor}}>{compositeSignal>0?'+':''}{compositeSignal.toFixed(3)}</div>
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',textTransform:'uppercase'}}>Active Weight</div>
+                <div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:totalW===100?'var(--g)':'var(--y)'}}>{totalW}%</div>
+              </div>
+            </div>
+          </div>
+          <div style={{padding:'12px 20px'}}>
+            <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Mapped Macros</div>
+            {op.macroMap.map(m => {
+              const mm = masterMacros.find(g => g.id === m.macroId);
+              const active = isActive(op.id, m.macroId);
+              const sc = (mm?.signal||0) > 0.3 ? 'var(--g)' : (mm?.signal||0) < -0.3 ? 'var(--r)' : 'var(--fg3)';
+              return <div key={m.macroId} style={{display:'grid',gridTemplateColumns:'32px 170px 60px 1fr 80px',gap:10,alignItems:'center',padding:'8px 0',borderBottom:'1px solid var(--border)',opacity:active?1:0.35}}>
+                <div style={{cursor:'pointer',fontSize:16,textAlign:'center'}} onClick={() => toggleOpMacro(op.id, m.macroId)} title={active?'Click to disable':'Click to enable'}>{active ? '✅' : '⬜'}</div>
+                <div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{mm?.label || m.macroId}</div>
+                <div style={{textAlign:'center'}}>
+                  <Badge color={op.color} small>{m.weight}%</Badge>
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:4}}>
+                  <div style={{flex:1,height:6,background:'var(--bg)',borderRadius:3,overflow:'hidden'}}>
+                    <div style={{width:`${Math.abs((mm?.signal||0))*100}%`,height:'100%',background:sc,borderRadius:3,marginLeft:(mm?.signal||0)<0?`${100-Math.abs((mm?.signal||0))*100}%`:0}}/>
+                  </div>
+                </div>
+                <div style={{textAlign:'right',fontSize:12,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>
+                  {(mm?.signal||0)>0?'+':''}{(mm?.signal||0).toFixed(2)}
+                </div>
+              </div>;
+            })}
+            {unmapped.length > 0 && <div style={{marginTop:16}}>
+              <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Available (not mapped)</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                {unmapped.map(mm => <span key={mm.id} style={{fontSize:9,fontFamily:'var(--mono)',padding:'2px 6px',borderRadius:3,background:'var(--bg)',color:'var(--fg4)',border:'1px solid var(--border)'}}>{mm.label}</span>)}
+              </div>
+            </div>}
+          </div>
+        </div>;
+      })()}
+    </div>}
+  </div>;
+}
+
 /* ═══════════════ OPERATORS VIEW ═══════════════ */
 
-/* Pan Asian style: horizontal scenario bar */
+/* Scenario bar */
 function ScenarioBarPA({probs, prices, currentPrice}) {
   return <div style={{display:'flex',gap:1,height:26,borderRadius:4,overflow:'hidden'}}>
     {probs.map((p,i) => {
@@ -672,48 +730,8 @@ function ScenarioBarPA({probs, prices, currentPrice}) {
   </div>;
 }
 
-/* Pan Asian style: stock row with horizontal bar */
-function StockRowPA({stock, eng, rank}) {
-  const cp = stock.currentPrice;
-  const isLong = stock.verdict === 'long';
-  const vc = eng.rr>15?'var(--g)':eng.rr>5?'#22c55e':eng.rr<-5?'var(--r)':'var(--fg3)';
-  return <div style={{
-    background:'var(--bg1)',borderRadius:8,padding:'14px 18px',marginBottom:6,
-    border:'1px solid var(--border)',borderLeft:`3px solid ${isLong?'var(--g)':'var(--r)'}`,
-    animation:`fadeIn .3s ease ${rank*0.03}s both`,
-  }}>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
-      <div style={{display:'flex',alignItems:'center',gap:10}}>
-        <span style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:700,color:'var(--fg)'}}>{stock.ticker}</span>
-        <span style={{fontSize:12,color:'var(--fg3)'}}>{stock.name}</span>
-        <Badge color={isLong?'var(--g)':'var(--r)'}>{stock.verdict.toUpperCase()}</Badge>
-      </div>
-      <div style={{display:'flex',alignItems:'center',gap:16}}>
-        <div style={{textAlign:'right'}}>
-          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>NOW</div>
-          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700}}>{fmt(cp,'price')}</div>
-        </div>
-        <div style={{textAlign:'right'}}>
-          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>EV</div>
-          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:eng.ev>cp?'var(--g)':'var(--r)'}}>{fmt(eng.ev,'price')}</div>
-        </div>
-        <div style={{textAlign:'right'}}>
-          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>R/R</div>
-          <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:vc}}>{fmt(eng.rr,'pct')}</div>
-        </div>
-        <div style={{textAlign:'right'}}>
-          <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>SKEW</div>
-          <div style={{fontSize:12,fontFamily:'var(--mono)',color:eng.skew>1?'var(--g)':'var(--r)'}}>{eng.skew.toFixed(2)}x</div>
-        </div>
-        <Badge color={vc} style={{minWidth:80,justifyContent:'center'}}>{eng.vd}</Badge>
-      </div>
-    </div>
-    <ScenarioBarPA probs={eng.pr} prices={stock.prices} currentPrice={cp} />
-  </div>;
-}
-
-/* GRS style: compact card with vertical probability bars */
-function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
+/* GRS stock card with vertical bars */
+function StockCardGRS({stock, eng, macroMap, masterMacros, open, toggle}) {
   const cp = stock.currentPrice;
   const mx = Math.max(...eng.pr);
   const isLong = stock.verdict === 'long';
@@ -721,6 +739,7 @@ function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
   const tc = eng.tier==='Core'?'var(--y)':eng.tier==='Satellite'?'var(--b)':'var(--fg4)';
   const mdd = ((Math.min(...stock.prices)-cp)/cp*100);
   const mxu = ((Math.max(...stock.prices)-cp)/cp*100);
+  const pt = getConvictionPT(stock, eng);
 
   return <div style={{background:'var(--bg1)',borderRadius:10,border:'1px solid var(--border)',borderLeft:`3px solid ${isLong?'var(--g)':'var(--r)'}`,overflow:'hidden',marginBottom:6}}>
     <div onClick={toggle} style={{padding:'12px 14px',cursor:'pointer',display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
@@ -751,35 +770,37 @@ function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
       </div>
     </div>
     {open && <div style={{padding:'0 14px 14px',borderTop:'1px solid var(--border)'}}>
-      {/* 7-scenario detail grid */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(7, 1fr)',gap:6,marginTop:12}}>
         {SCENARIOS.map((s,i) => <div key={s.id} style={{background:'var(--bg)',borderRadius:6,padding:8,textAlign:'center',border:`1px solid ${s.color}22`}}>
           <div style={{fontSize:8,fontFamily:'var(--mono)',color:s.color,fontWeight:600,marginBottom:3}}>{s.label}</div>
           <div style={{fontSize:13,fontFamily:'var(--mono)',color:'var(--fg)',fontWeight:700}}>{fmt(stock.prices[i],'price')}</div>
           <div style={{fontSize:10,fontFamily:'var(--mono)',color:s.color,marginTop:2}}>{eng.pr[i].toFixed(1)}%</div>
-          <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:2}}>
-            {(((stock.prices[i]-cp)/cp)*100).toFixed(0)}%
-          </div>
+          <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:2}}>{(((stock.prices[i]-cp)/cp)*100).toFixed(0)}%</div>
         </div>)}
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:12}}>
-        {/* Risk panel */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginTop:12}}>
         <div style={{background:'var(--bg)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
           <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg3)',letterSpacing:1,marginBottom:6}}>RISK</div>
-          {[['Max Drawdown',`${mdd.toFixed(0)}%`,'var(--r)'],['Max Upside',`+${mxu.toFixed(0)}%`,'var(--g)'],['Skew Ratio',eng.skew.toFixed(2),eng.skew>1?'#22d3ee':'#f97316'],['Tier',eng.tier,tc]]
+          {[['Max Drawdown',`${mdd.toFixed(0)}%`,'var(--r)'],['Max Upside',`+${mxu.toFixed(0)}%`,'var(--g)'],['Skew',eng.skew.toFixed(2),eng.skew>1?'#22d3ee':'#f97316'],['Tier',eng.tier,tc]]
             .map(([k,va,co]) => <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'var(--mono)',padding:'2px 0'}}>
               <span style={{color:'var(--fg3)'}}>{k}</span><span style={{color:co,fontWeight:600}}>{va}</span>
             </div>)}
         </div>
-        {/* Macro sensitivity */}
+        <div style={{background:'var(--bg)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
+          <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg3)',letterSpacing:1,marginBottom:6}}>PRICE TARGETS</div>
+          {[['Bull PT', fmt(pt.bullPT,'price'), 'var(--g)'],['Bear PT', fmt(pt.bearPT,'price'), 'var(--r)'],['Conviction', pt.conviction, vc],['Current', fmt(cp,'price'), 'var(--fg)']]
+            .map(([k,va,co]) => <div key={k} style={{display:'flex',justifyContent:'space-between',fontSize:10,fontFamily:'var(--mono)',padding:'2px 0'}}>
+              <span style={{color:'var(--fg3)'}}>{k}</span><span style={{color:co,fontWeight:600}}>{va}</span>
+            </div>)}
+        </div>
         <div style={{background:'var(--bg)',borderRadius:8,padding:10,border:'1px solid var(--border)'}}>
           <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg3)',letterSpacing:1,marginBottom:6}}>MACRO SENSITIVITY</div>
           <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-            {driverMap.map(m => {
-              const sv = stock.sens?.[m.driverId] || 0;
-              const dl = drivers.find(d => d.id === m.driverId);
-              return <div key={m.driverId} style={{background:'var(--bg1)',borderRadius:4,padding:'3px 7px',border:'1px solid var(--border)',fontSize:10,fontFamily:'var(--mono)'}}>
-                <span style={{color:'var(--fg4)'}}>{(dl?.label||m.driverId).split(' ')[0]}: </span>
+            {macroMap.map(m => {
+              const sv = stock.sens?.[m.macroId] || 0;
+              const mm = masterMacros.find(d => d.id === m.macroId);
+              return <div key={m.macroId} style={{background:'var(--bg1)',borderRadius:4,padding:'3px 7px',border:'1px solid var(--border)',fontSize:10,fontFamily:'var(--mono)'}}>
+                <span style={{color:'var(--fg4)'}}>{(mm?.label||m.macroId).split(' ')[0]}: </span>
                 <span style={{color:sv>0?'var(--g)':sv<0?'var(--r)':'var(--fg4)',fontWeight:600}}>{sv>0?'+':''}{sv.toFixed(1)}</span>
               </div>;
             })}
@@ -790,69 +811,76 @@ function StockCardGRS({stock, eng, drivers, driverMap, open, toggle}) {
   </div>;
 }
 
-/* Main Operators View with inline detail */
-function OperatorsView({operators, globalDrivers}) {
+/* Main Operators View */
+function OperatorsView({operators, masterMacros}) {
   const [selectedOp, setSelectedOp] = useState(null);
-  const [viewMode, setViewMode] = useState('card'); /* 'card' or 'row' */
   const [sortBy, setSortBy] = useState('rr');
   const [openCards, setOpenCards] = useState({});
-  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, globalDrivers)}));
-
+  const allStats = operators.map(op => ({...op, stats: computeOpStats(op, masterMacros)}));
   const toggleCard = (ticker) => setOpenCards(prev => ({...prev, [ticker]: !prev[ticker]}));
+  const categories = ['GRS','Asian GRS'];
 
-  /* OPERATOR LIST VIEW */
   if (!selectedOp) {
     return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
       <div style={{marginBottom:28}}>
         <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--p)',fontWeight:400,marginBottom:6}}>Operators</h1>
-        <p style={{fontSize:12,color:'var(--fg4)'}}>Click any operator to open its inline engine with full stock detail, scenario bars, and risk metrics.</p>
+        <p style={{fontSize:12,color:'var(--fg4)'}}>Click any operator to open its engine with stock detail, scenario bars, and price targets.</p>
       </div>
-      {allStats.map(op => {
-        const s = op.stats;
-        const topLongs = s.results.filter(r => r.verdict==='long').sort((a,b) => (b.eng?.rr||0)-(a.eng?.rr||0)).slice(0,3);
-        const topShorts = s.results.filter(r => r.verdict==='short').sort((a,b) => (a.eng?.rr||0)-(b.eng?.rr||0)).slice(0,3);
-        return <div key={op.id} onClick={() => setSelectedOp(op.id)} style={{marginBottom:20,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden',cursor:'pointer',transition:'border-color .15s'}}
-          onMouseEnter={e => e.currentTarget.style.borderColor = op.color+'60'}
-          onMouseLeave={e => e.currentTarget.style.borderColor = op.color+'15'}>
-          <div style={{padding:'18px 24px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <div style={{display:'flex',alignItems:'center',gap:12}}>
-              <span style={{fontSize:24}}>{op.icon}</span>
-              <div>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
-                  <span style={{fontSize:12,color:'var(--fg3)'}}>{op.team}</span>
+      {categories.map(cat => {
+        const catOps = allStats.filter(o => o.category === cat);
+        if (!catOps.length) return null;
+        return <div key={cat} style={{marginBottom:24}}>
+          <div style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:10,display:'flex',alignItems:'center',gap:8}}>
+            <span>{cat}</span><span style={{flex:1,height:1,background:'var(--border)'}}/>
+          </div>
+          {catOps.map(op => {
+            const s = op.stats;
+            const topLongs = s.results.filter(r => r.verdict==='long').sort((a,b) => (b.eng?.rr||0)-(a.eng?.rr||0)).slice(0,3);
+            const topShorts = s.results.filter(r => r.verdict==='short').sort((a,b) => (a.eng?.rr||0)-(b.eng?.rr||0)).slice(0,3);
+            return <div key={op.id} onClick={() => setSelectedOp(op.id)} style={{marginBottom:14,background:'var(--bg2)',border:`1px solid ${op.color}15`,borderRadius:8,overflow:'hidden',cursor:'pointer',transition:'border-color .15s'}}
+              onMouseEnter={e => e.currentTarget.style.borderColor = op.color+'60'}
+              onMouseLeave={e => e.currentTarget.style.borderColor = op.color+'15'}>
+              <div style={{padding:'18px 24px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  <span style={{fontSize:24}}>{op.icon}</span>
+                  <div>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <span style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
+                      <Badge color={op.color} small>{op.category}</Badge>
+                      <span style={{fontSize:12,color:'var(--fg3)'}}>{op.team}</span>
+                    </div>
+                    <div style={{fontSize:11,color:'var(--fg4)',marginTop:2}}>{op.desc}</div>
+                  </div>
                 </div>
-                <div style={{fontSize:11,color:'var(--fg4)',marginTop:2}}>{op.desc}</div>
+                <span style={{fontSize:11,fontFamily:'var(--mono)',color:op.color}}>View Detail →</span>
               </div>
-            </div>
-            <span style={{fontSize:11,fontFamily:'var(--mono)',color:op.color}}>View Detail →</span>
-          </div>
-          <div style={{padding:'14px 24px',display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:12}}>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Long R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--g)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Short R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--r)'}}>{fmt(s.avgShortRR,'pct')}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Drivers</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--y)'}}>{op.drivers.length}</div></div>
-            <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Regime</div><div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:s.regime.includes('BULL')?'var(--g)':s.regime.includes('BEAR')?'var(--r)':'var(--fg3)'}}>{s.regime}</div></div>
-          </div>
-          <div style={{padding:'0 24px 16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
-            <div>
-              <div style={{fontSize:8,color:'var(--g)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Longs by R/R</div>
-              {topLongs.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
-                <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
-                <span style={{color:'var(--fg3)'}}>{s.name}</span>
-                <span style={{color:'var(--g)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
-              </div>)}
-            </div>
-            <div>
-              <div style={{fontSize:8,color:'var(--r)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Shorts by R/R</div>
-              {topShorts.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
-                <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
-                <span style={{color:'var(--fg3)'}}>{s.name}</span>
-                <span style={{color:'var(--r)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
-              </div>)}
-            </div>
-          </div>
+              <div style={{padding:'14px 24px',display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--fg)'}}>{op.stocks.length}</div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Long R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--g)'}}>{fmt(s.avgLongRR,'pct')}</div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Short R/R</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:'var(--r)'}}>{fmt(s.avgShortRR,'pct')}</div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div><div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:600,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div></div>
+                <div><div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Regime</div><div style={{fontSize:12,fontFamily:'var(--mono)',fontWeight:600,color:s.regime.includes('BULL')?'var(--g)':s.regime.includes('BEAR')?'var(--r)':'var(--fg3)'}}>{s.regime}</div></div>
+              </div>
+              <div style={{padding:'0 24px 16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                <div>
+                  <div style={{fontSize:8,color:'var(--g)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Longs</div>
+                  {topLongs.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
+                    <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
+                    <span style={{color:'var(--fg3)'}}>{s.name}</span>
+                    <span style={{color:'var(--g)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
+                  </div>)}
+                </div>
+                <div>
+                  <div style={{fontSize:8,color:'var(--r)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>Top Shorts</div>
+                  {topShorts.map(s => <div key={s.ticker} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'4px 0',fontSize:11,fontFamily:'var(--mono)'}}>
+                    <span style={{color:'var(--fg)',fontWeight:600}}>{s.ticker}</span>
+                    <span style={{color:'var(--fg3)'}}>{s.name}</span>
+                    <span style={{color:'var(--r)',fontWeight:700}}>{fmt(s.eng?.rr,'pct')}</span>
+                  </div>)}
+                </div>
+              </div>
+            </div>;
+          })}
         </div>;
       })}
     </div>;
@@ -862,21 +890,16 @@ function OperatorsView({operators, globalDrivers}) {
   const op = allStats.find(o => o.id === selectedOp);
   if (!op) return null;
   const s = op.stats;
-  const results = s.results.map(r => ({...r}));
+  const results = [...s.results];
+  if (sortBy === 'rr') results.sort((a,b) => Math.abs(b.eng?.rr||0) - Math.abs(a.eng?.rr||0));
+  if (sortBy === 'skew') results.sort((a,b) => (b.eng?.skew||0) - (a.eng?.skew||0));
+  if (sortBy === 'alpha') results.sort((a,b) => a.ticker.localeCompare(b.ticker));
+  if (sortBy === 'side') results.sort((a,b) => (a.verdict==='long'?0:1) - (b.verdict==='long'?0:1));
 
-  /* Sort */
-  const sorted = [...results];
-  if (sortBy === 'rr') sorted.sort((a,b) => Math.abs(b.eng?.rr||0) - Math.abs(a.eng?.rr||0));
-  if (sortBy === 'skew') sorted.sort((a,b) => (b.eng?.skew||0) - (a.eng?.skew||0));
-  if (sortBy === 'alpha') sorted.sort((a,b) => a.ticker.localeCompare(b.ticker));
-  if (sortBy === 'side') sorted.sort((a,b) => (a.verdict==='long'?0:1) - (b.verdict==='long'?0:1));
-  if (sortBy === 'ev') sorted.sort((a,b) => (b.eng?.ev||0) - (a.eng?.ev||0));
-
-  const compositeSignal = globalDrivers.reduce((sum,d) => {
-    const dm = op.driverMap.find(m => m.driverId === d.id);
-    return sum + (d.signal * (dm ? dm.weight : 0) / 100);
+  const compositeSignal = masterMacros.reduce((sum,mm) => {
+    const dm = op.macroMap.find(m => m.macroId === mm.id);
+    return sum + (mm.signal * (dm ? dm.weight : 0) / 100);
   }, 0);
-
   let regime = 'NEUTRAL';
   if (compositeSignal > 0.15) regime = 'BULLISH';
   if (compositeSignal > 0.35) regime = 'STRONG BULL';
@@ -884,13 +907,7 @@ function OperatorsView({operators, globalDrivers}) {
   if (compositeSignal < -0.35) regime = 'STRONG BEAR';
   const regimeColor = regime.includes('BULL') ? 'var(--g)' : regime.includes('BEAR') ? 'var(--r)' : 'var(--fg3)';
 
-  const longs = results.filter(r => r.verdict === 'long');
-  const shorts = results.filter(r => r.verdict === 'short');
-  const avgLongRR = longs.length ? longs.reduce((a,r) => a + (r.eng?.rr||0), 0) / longs.length : 0;
-  const avgShortRR = shorts.length ? shorts.reduce((a,r) => a + (r.eng?.rr||0), 0) / shorts.length : 0;
-
   return <div style={{padding:32,maxWidth:1200,margin:'0 auto',animation:'fadeIn .3s ease'}}>
-    {/* Back + Header */}
     <div style={{marginBottom:24}}>
       <button onClick={() => setSelectedOp(null)} style={{border:'none',background:'transparent',color:'var(--fg4)',fontFamily:'var(--mono)',fontSize:12,cursor:'pointer',padding:'4px 0',marginBottom:8}}>← All Operators</button>
       <div style={{display:'flex',alignItems:'center',gap:14}}>
@@ -898,487 +915,162 @@ function OperatorsView({operators, globalDrivers}) {
         <div>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <span style={{fontSize:26,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.name}</span>
-            <Badge color={op.color}>{op.team}</Badge>
-            <Badge color={regimeColor}>{regime}</Badge>
+            <Badge color={op.color}>{op.category}</Badge>
+            <span style={{fontSize:14,color:'var(--fg3)'}}>{op.team}</span>
           </div>
-          <div style={{fontSize:12,color:'var(--fg4)',marginTop:3}}>{op.desc}</div>
+          <div style={{fontSize:12,color:'var(--fg4)',marginTop:2}}>{op.desc}</div>
         </div>
       </div>
     </div>
 
-    {/* Stats Row */}
-    <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:10,marginBottom:24}}>
-      {[
-        ['Stocks',results.length,'var(--fg)'],
-        ['Longs',longs.length,'var(--g)'],
-        ['Shorts',shorts.length,'var(--r)'],
-        ['Avg Long R/R',fmt(avgLongRR,'pct'),'var(--g)'],
-        ['Avg Short R/R',fmt(avgShortRR,'pct'),'var(--r)'],
-        ['Avg Skew',`${s.avgSkew.toFixed(2)}x`,s.avgSkew>1?'var(--g)':'var(--fg3)'],
-        ['Composite',`${compositeSignal>=0?'+':''}${compositeSignal.toFixed(2)}`,regimeColor],
-      ].map(([l,v,c]) => <div key={l} style={{padding:'12px 14px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
-        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:4}}>{l}</div>
-        <div style={{fontSize:16,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
-      </div>)}
-    </div>
-
-    {/* Macro Drivers compact strip */}
-    <div style={{marginBottom:24,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,padding:'14px 18px'}}>
-      <div style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:10}}>Active Macro Drivers</div>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-        {op.driverMap.map(m => {
-          const gd = globalDrivers.find(d => d.id === m.driverId);
-          const sig = gd ? gd.signal : 0;
-          const sc = sig > 0 ? 'var(--g)' : sig < 0 ? 'var(--r)' : 'var(--fg4)';
-          return <div key={m.driverId} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:'var(--bg1)',borderRadius:6,border:'1px solid var(--border)'}}>
-            <span style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)'}}>{(gd?.label||m.driverId)}</span>
-            <span style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:sc}}>{sig>=0?'+':''}{sig.toFixed(1)}</span>
-            <span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{m.weight}%</span>
-          </div>;
-        })}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:10,marginBottom:20}}>
+      <div style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Composite</div>
+        <div style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:regimeColor}}>{compositeSignal>0?'+':''}{compositeSignal.toFixed(3)}</div>
+      </div>
+      <div style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Regime</div>
+        <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:regimeColor}}>{regime}</div>
+      </div>
+      <div style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Long R/R</div>
+        <div style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:'var(--g)'}}>{fmt(s.avgLongRR,'pct')}</div>
+      </div>
+      <div style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Short R/R</div>
+        <div style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:'var(--r)'}}>{fmt(s.avgShortRR,'pct')}</div>
+      </div>
+      <div style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Avg Skew</div>
+        <div style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:s.avgSkew>1?'var(--g)':'var(--fg3)'}}>{fmt(s.avgSkew,'ratio')}</div>
+      </div>
+      <div style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase'}}>Names</div>
+        <div style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700}}><span style={{color:'var(--g)'}}>{s.longs}</span><span style={{color:'var(--fg4)'}}> / </span><span style={{color:'var(--r)'}}>{s.shorts}</span></div>
       </div>
     </div>
 
-    {/* View toggle + Sort controls */}
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-      <div style={{display:'flex',gap:6}}>
-        <Btn active={viewMode==='card'} onClick={() => setViewMode('card')}>◆ Card View</Btn>
-        <Btn active={viewMode==='row'} onClick={() => setViewMode('row')}>≡ Row View</Btn>
-      </div>
-      <div style={{display:'flex',gap:4,alignItems:'center'}}>
-        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginRight:4}}>SORT:</span>
-        {[['rr','R/R'],['skew','Skew'],['alpha','A-Z'],['side','Side'],['ev','EV']].map(([k,l]) =>
-          <Btn key={k} active={sortBy===k} onClick={() => setSortBy(k)} small>{l}</Btn>
-        )}
-      </div>
+    <div style={{display:'flex',gap:4,marginBottom:14}}>
+      {[['rr','R/R'],['skew','Skew'],['alpha','A→Z'],['side','Side']].map(([k,l]) =>
+        <Btn key={k} active={sortBy===k} color={op.color} onClick={() => setSortBy(k)}>{l}</Btn>)}
     </div>
 
-    {/* Stock list */}
-    {viewMode === 'row'
-      ? sorted.map((r,i) => <StockRowPA key={r.ticker} stock={r} eng={r.eng} rank={i} />)
-      : sorted.map((r,i) => <StockCardGRS key={r.ticker} stock={r} eng={r.eng}
-          drivers={op.drivers} driverMap={op.driverMap}
-          open={!!openCards[r.ticker]} toggle={() => toggleCard(r.ticker)} />)
-    }
+    {results.map((r,i) => <StockCardGRS key={r.ticker} stock={r} eng={r.eng} macroMap={op.macroMap} masterMacros={masterMacros} open={openCards[r.ticker]} toggle={() => toggleCard(r.ticker)} />)}
   </div>;
 }
 
-/* ═══════════════ DATA UPLOAD ═══════════════ */
-
-/* Operator screening rules: geography + GICS sector matching */
-const SCREEN_RULES = {
-  tig: { sectors: ['Transportation','Hotels, Restaurants & Leisure','Airlines','Air Freight & Logistics','Leisure Products','Passenger Airlines','Hotels, Resorts & Cruise Lines','Casinos & Gaming','Leisure Facilities','Airport Services'], geo: null },
-  rone: { sectors: ['Aerospace & Defense'], geo: ['GB','FR','DE','IT','SE','NO','NL','ES','FI','DK','PL','RO','GR','CZ','BE','IL'] },
-  tanto: { sectors: ['Energy','Oil, Gas & Consumable Fuels','Energy Equipment & Services','Oil & Gas Exploration & Production','Oil & Gas Refining & Marketing','Integrated Oil & Gas'], geo: null },
-  jack: { sectors: ['Semiconductors & Semiconductor Equipment','Technology Hardware, Storage & Peripherals','Electronic Equipment, Instruments & Components','Communications Equipment','IT Services','Systems Software','Application Software'], geo: null, keywords: ['semiconductor','chip','AI','neural','GPU','ASML','foundry','wafer','networking','cyber'] },
-  boon: { sectors: ['Transaction & Payment Processing Services','Financial Exchanges & Data','Consumer Finance','Diversified Financial Services'], geo: null, keywords: ['payment','fintech','digital bank','BNPL','crypto','commerce platform'] },
-  oz: { sectors: ['Pharmaceuticals','Biotechnology','Life Sciences Tools & Services','Health Care Equipment & Supplies','Health Care Technology','Managed Health Care','Health Care Distributors','Health Care Services','Health Care Facilities'], geo: null },
-  ipm: { sectors: null, geo: ['CN','HK'] },
-  miu: { sectors: null, geo: ['JP'] },
-  ctc: { sectors: null, geo: ['TW'] },
-  wzh: { sectors: null, geo: ['KR'] },
-  frk: { sectors: null, geo: ['SG'] },
-};
-
-function matchOperators(row) {
-  const matches = [];
-  const country = (row.country || '').toUpperCase().trim();
-  const sector = (row.gics_sector || '').trim();
-  const industry = (row.gics_industry || '').trim();
-  const name = (row.name || '').toLowerCase();
-
-  Object.entries(SCREEN_RULES).forEach(([opId, rule]) => {
-    let geoMatch = !rule.geo || rule.geo.includes(country);
-    let sectorMatch = !rule.sectors || rule.sectors.some(s =>
-      sector.toLowerCase().includes(s.toLowerCase()) ||
-      industry.toLowerCase().includes(s.toLowerCase())
-    );
-    let keywordMatch = rule.keywords ? rule.keywords.some(k => name.includes(k.toLowerCase()) || industry.toLowerCase().includes(k.toLowerCase())) : false;
-
-    if (rule.geo && rule.sectors) {
-      if (geoMatch && (sectorMatch || keywordMatch)) matches.push(opId);
-    } else if (rule.geo) {
-      if (geoMatch) matches.push(opId);
-    } else if (rule.sectors) {
-      if (sectorMatch || keywordMatch) matches.push(opId);
-    }
-  });
-  return matches;
-}
-
-/* ═══════════════ TICKER MATCHING — STRIP FIRST ═══════════════ */
-
-/* Hardcoded aliases for tickers where BBG symbol ≠ XA symbol (especially Singapore SGX codes) */
-const TICKER_ALIASES = {
-  /* Singapore: BBG uses company tickers, XA uses SGX board codes */
-  'DBS':'D05.SI', 'OCBC':'O39.SI', 'UOB':'U11.SI',
-  'CLAR':'A17U.SI', 'KEP':'BN4.SI', 'ST':'Z74.SI',
-  'SIA':'C6L.SI', 'WIL':'F34.SI', 'SGX':'S68.SI',
-};
-
-/* Strip ANY ticker to its bare symbol: "NAS NO Equity" → "NAS", "NAS.OL" → "NAS", "0700.HK" → "700" */
-function stripTicker(t) {
-  if (!t) return '';
-  return t
-    .replace(/\s+(Equity|Index)$/i, '')  /* remove yellow key */
-    .replace(/\.[A-Z]{1,3}$/i, '')       /* remove .OL .HK .T .DE etc */
-    .replace(/\//g, '')                   /* remove slashes (BA/ LN) */
-    .split(/\s+/)[0]                      /* take first part before space (NAS from "NAS NO") */
-    .replace(/^0+(\d)/, '$1')             /* strip leading zeros but keep at least 1 digit */
-    .toUpperCase()
-    .trim();
-}
-
-/* Match a BBG row to operator stocks. Returns {ticker, opIds} or null */
-function matchToOperators(bbgTicker, bbgName, operators) {
-  const stripped = stripTicker(bbgTicker);
-  const nameLower = (bbgName || '').toLowerCase().trim();
-
-  /* Layer 0: Hardcoded aliases (Singapore SGX codes etc) */
-  if (stripped && TICKER_ALIASES[stripped]) {
-    const xaTicker = TICKER_ALIASES[stripped];
-    const opIds = operators.filter(op => op.stocks.some(s => s.ticker === xaTicker)).map(op => op.id);
-    if (opIds.length) return { ticker: xaTicker, opIds };
-  }
-
-  /* Layer 1: Stripped ticker match — scan all operator stocks */
-  for (const op of operators) {
-    for (const s of op.stocks) {
-      if (stripped && stripTicker(s.ticker) === stripped) {
-        /* Found — collect ALL operators that have this ticker */
-        const xaTicker = s.ticker;
-        const opIds = operators.filter(o => o.stocks.some(st => st.ticker === xaTicker)).map(o => o.id);
-        return { ticker: xaTicker, opIds };
-      }
-    }
-  }
-
-  /* Layer 2: Name match — scan all operator stocks */
-  if (nameLower.length >= 4) {
-    for (const op of operators) {
-      for (const s of op.stocks) {
-        const stockName = s.name.toLowerCase();
-        /* Substring match (either direction) */
-        if (stockName.length >= 4 && (nameLower.includes(stockName) || stockName.includes(nameLower))) {
-          const xaTicker = s.ticker;
-          const opIds = operators.filter(o => o.stocks.some(st => st.ticker === xaTicker)).map(o => o.id);
-          return { ticker: xaTicker, opIds };
-        }
-        /* First word match (min 5 chars) */
-        const bbgFirst = nameLower.split(/[\s,]+/)[0];
-        const stockFirst = stockName.split(/[\s,]+/)[0];
-        if (bbgFirst.length >= 5 && bbgFirst === stockFirst) {
-          const xaTicker = s.ticker;
-          const opIds = operators.filter(o => o.stocks.some(st => st.ticker === xaTicker)).map(o => o.id);
-          return { ticker: xaTicker, opIds };
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
-function DataView({operators, globalDrivers, snapData, setSnapData}) {
+/* ═══════════════ DATA VIEW ═══════════════ */
+function DataView({operators, masterMacros, snapData, setSnapData}) {
   const [dragOver, setDragOver] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState(null);
-  const [filter, setFilter] = useState('all');
-  const [sortCol, setSortCol] = useState('mkt_cap_m');
-  const [sortDir, setSortDir] = useState('desc');
-  const [searchQ, setSearchQ] = useState('');
+  const fileRef = useRef(null);
   const [opFilter, setOpFilter] = useState('all');
-  const fileRef = useRef();
+  const [searchQ, setSearchQ] = useState('');
+  const [sortCol, setSortCol] = useState('mkt_cap_usd_m');
+  const [sortDir, setSortDir] = useState('desc');
 
   const parseFile = (file) => {
-    setParsing(true);
-    setError(null);
+    setError(null); setParsing(true);
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = XLSX.read(e.target.result, {type:'array'});
-        /* Try Upload, Universe, or first sheet */
-        /* Pick sheet with most data — try known names first, compare row counts */
-        const SHEET_CANDIDATES = ['Universe','Upload','MSCI World','MSCI China','Sheet1'];
-        let sheetName = wb.SheetNames[0];
-        let bestRows = 0;
-        const trySheets = SHEET_CANDIDATES.filter(n => wb.SheetNames.includes(n));
-        if (!trySheets.length) trySheets.push(wb.SheetNames[0]);
-        trySheets.forEach(n => {
-          const ref = wb.Sheets[n]['!ref'];
-          if (ref) {
-            const lastRow = parseInt(ref.split(':')[1]?.replace(/[A-Z]/g,'') || '0');
-            if (lastRow > bestRows) { bestRows = lastRow; sheetName = n; }
-          }
-        });
-        console.log(`[XA Data Hub] Using sheet "${sheetName}" (${bestRows} rows). Available: ${wb.SheetNames.join(', ')}`);
-        const ws = wb.Sheets[sheetName];
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type:'array'});
+        const ws = wb.Sheets['Upload'] || wb.Sheets[wb.SheetNames[0]];
+        if (!ws) throw new Error('No "Upload" sheet found');
+        const raw = XLSX.utils.sheet_to_json(ws, {defval:''});
+        if (!raw.length) throw new Error('Sheet is empty');
 
-        /* Find header row: scan for row containing any known ticker column name */
-        const allRows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-        let headerIdx = -1;
-        const HEADER_MARKERS = ['bbg_ticker','ticker','BBG_TICKER','Ticker','xa_ticker','BBG Ticker','XA Ticker'];
-        for (let i = 0; i < Math.min(allRows.length, 20); i++) {
-          const row = allRows[i];
-          if (Array.isArray(row) && row.some(c => HEADER_MARKERS.includes(String(c).trim()))) {
-            headerIdx = i; break;
-          }
-        }
+        const parsed = raw.map(r => {
+          const bbg = (r['BBG Ticker'] || r['bbg_ticker'] || r['Ticker'] || '').toString().trim();
+          const name = (r['Name'] || r['name'] || r['Security Name'] || '').toString().trim();
+          const price = parseFloat(r['Price'] || r['price'] || r['PX_LAST'] || 0);
+          const mktCap = parseFloat(r['Mkt Cap (USD m)'] || r['mkt_cap_usd_m'] || r['CUR_MKT_CAP'] || 0);
+          const country = (r['Country'] || r['country'] || r['COUNTRY_ISO'] || '').toString().trim();
+          const sector = (r['Sector'] || r['sector'] || r['GICS_SECTOR_NAME'] || '').toString().trim();
+          const pe = parseFloat(r['PE'] || r['pe'] || r['PE_RATIO'] || 0) || null;
+          const div_yield = parseFloat(r['Div Yield'] || r['div_yield'] || r['EQY_DVD_YLD_IND'] || 0) || null;
+          return { bbg_ticker: bbg, name, price, mkt_cap_usd_m: mktCap, country, sector, pe, div_yield };
+        }).filter(r => r.bbg_ticker && r.price > 0);
 
-        /* Column name normaliser: maps display headers to snake_case keys */
-        const COL_NORM = {
-          'bbg ticker':'bbg_ticker','bbg_ticker':'bbg_ticker','ticker':'bbg_ticker','xa ticker':'bbg_ticker','xa_ticker':'bbg_ticker',
-          'name':'name','security_name':'name',
-          'country':'country','country_iso':'country',
-          'gics sector':'gics_sector','gics_sector_name':'gics_sector','gics sector name':'gics_sector',
-          'gics industry':'gics_industry','gics_industry_group_name':'gics_industry','gics industry group name':'gics_industry','gics industry group':'gics_industry',
-          'ccy':'ccy','crncy':'ccy','currency':'ccy',
-          'mkt cap ($m)':'mkt_cap_m','mkt cap (m)':'mkt_cap_m','mkt_cap_m':'mkt_cap_m','cur_mkt_cap':'mkt_cap_m','mkt cap':'mkt_cap_m','market cap':'mkt_cap_m',
-          'price':'price','price (fri cob)':'price','px_last':'price','px last':'price','last price':'price',
-          'fwd p/e':'fwd_pe','fwd pe':'fwd_pe','fwd_pe':'fwd_pe','best_pe_ratio':'fwd_pe','best pe ratio':'fwd_pe',
-          'trail p/e':'trail_pe','trail pe':'trail_pe','trail_pe':'trail_pe','pe_ratio':'trail_pe','pe ratio':'trail_pe',
-          'fwd ev/ebitda':'fwd_ev_ebitda','fwd_ev_ebitda':'fwd_ev_ebitda','best_ev_to_ebitda':'fwd_ev_ebitda','fwd ev/eb':'fwd_ev_ebitda','ev/ebitda':'fwd_ev_ebitda',
-          'p/b':'pb','pb':'pb','px_to_book_ratio':'pb','price to book':'pb',
-          'ev/sales':'ev_sales','ev_sales':'ev_sales','best_ev_to_best_sales':'ev_sales',
-          'roe %':'roe_pct','roe_pct':'roe_pct','return_com_eqy':'roe_pct','roe':'roe_pct',
-          'op margin %':'op_margin_pct','op_margin_pct':'op_margin_pct','oper_margin':'op_margin_pct','operating margin':'op_margin_pct',
-          'net margin %':'net_margin_pct','net_margin_pct':'net_margin_pct','prof_margin':'net_margin_pct','net margin':'net_margin_pct',
-          'fcf/share':'fcf_per_sh','fcf_per_sh':'fcf_per_sh','cf_free_cash_flow_per_sh':'fcf_per_sh','fcf per share':'fcf_per_sh',
-          '52w chg %':'chg_52w_pct','chg_52w_pct':'chg_52w_pct','chg_pct_52wk':'chg_52w_pct','52 week change':'chg_52w_pct',
-          'eps rev 3m %':'eps_rev_3m_pct','eps_rev_3m_pct':'eps_rev_3m_pct','best_eps_3mo_pct_chg':'eps_rev_3m_pct','eps revision':'eps_rev_3m_pct',
-          'beta':'beta','eqy_beta':'beta',
-          'nd/ebitda':'nd_ebitda','nd_ebitda':'nd_ebitda','tot_debt_to_ebitda':'nd_ebitda','net debt/ebitda':'nd_ebitda',
-          'div yield %':'div_yield_pct','div_yield_pct':'div_yield_pct','eqy_dvd_yld_ind':'div_yield_pct','dividend yield':'div_yield_pct',
-        };
-        function normCol(h) { return COL_NORM[h.toLowerCase().trim()] || h.toLowerCase().trim().replace(/[\s\/()$%]+/g,'_').replace(/_+$/,''); }
+        const filtered = parsed.filter(r => r.mkt_cap_usd_m >= 1000);
 
-        let raw;
-        if (headerIdx >= 0) {
-          const headers = allRows[headerIdx].map(h => normCol(String(h)));
-          raw = allRows.slice(headerIdx + 1)
-            .filter(row => row.some(c => c !== '' && c !== undefined && c !== null))
-            .map(row => {
-              const obj = {};
-              headers.forEach((h, ci) => { if (h) obj[h] = row[ci] !== undefined ? row[ci] : ''; });
-              return obj;
-            });
-        } else {
-          /* Fallback: standard parse then normalise keys */
-          const fallback = XLSX.utils.sheet_to_json(ws, {defval:''});
-          raw = fallback.map(r => {
-            const obj = {};
-            Object.entries(r).forEach(([k,v]) => { obj[normCol(k)] = v; });
-            return obj;
-          });
-        }
+        const allOpStocks = operators.flatMap(op => op.stocks.map(s => ({...s, opId: op.id, opName: op.name})));
+        const tickerSet = new Set(allOpStocks.map(s => s.ticker));
 
-        /* Filter out hint/subtitle rows (row 5 in template has BBG field names) */
-        raw = raw.filter(r => {
-          const tick = (r.bbg_ticker || '').toString().trim();
-          return tick && !tick.startsWith('←') && !tick.startsWith('↑') && !tick.includes('auto-populates') && tick.length > 1;
-        });
-
-        if (!raw.length) { setError('No data rows found — check sheet has data with a ticker column (BBG Ticker, ticker, etc)'); setParsing(false); return; }
-
-        /* Parse and normalise — brute force match against all 132 operator stocks */
-        const parsed = raw
-          .filter(r => r.bbg_ticker)
-          .map(r => {
-            const bbg = (r.bbg_ticker || '').toString().trim();
-            const price = parseFloat(r.price || 0);
-            const mktCap = parseFloat(r.mkt_cap_m || 0);
-            const rowName = (r.name || '').toString().trim();
-            const row = {
-              bbg_ticker: bbg,
-              name: rowName,
-              country: (r.country || '').toString().trim(),
-              gics_sector: (r.gics_sector || '').toString().trim(),
-              gics_industry: (r.gics_industry || '').toString().trim(),
-              ccy: (r.ccy || '').toString().trim(),
-              mkt_cap_m: mktCap,
-              price: price,
-              fwd_pe: parseFloat(r.fwd_pe || 0),
-              trail_pe: parseFloat(r.trail_pe || 0),
-              fwd_ev_ebitda: parseFloat(r.fwd_ev_ebitda || 0),
-              pb: parseFloat(r.pb || 0),
-              ev_sales: parseFloat(r.ev_sales || 0),
-              roe_pct: parseFloat(r.roe_pct || 0),
-              op_margin_pct: parseFloat(r.op_margin_pct || 0),
-              net_margin_pct: parseFloat(r.net_margin_pct || 0),
-              fcf_per_sh: parseFloat(r.fcf_per_sh || 0),
-              chg_52w_pct: parseFloat(r.chg_52w_pct || 0),
-              eps_rev_3m_pct: parseFloat(r.eps_rev_3m_pct || 0),
-              beta: parseFloat(r.beta || 0),
-              nd_ebitda: parseFloat(r.nd_ebitda || 0),
-              div_yield_pct: parseFloat(r.div_yield_pct || 0),
-            };
-
-            /* Match: strip ticker first, then name fallback */
-            const match = matchToOperators(bbg, rowName, operators);
-            if (match) {
-              row.matched_ops = match.opIds;
-              row.matched_ticker = match.ticker;
-              row.is_direct_match = true;
-            } else {
-              row.matched_ops = matchOperators(row);
-              row.matched_ticker = null;
-              row.is_direct_match = false;
-            }
-
-            return row;
-          })
-          .filter(r => r.price > 0);
-
-        /* Apply $1bn filter for universe browser only */
-        const filtered = parsed.filter(r => !r.mkt_cap_m || r.mkt_cap_m >= 1000);
-
-        /* Update operator stock prices from ALL direct matches (not filtered — small caps like NAS need prices too) */
         let priceUpdates = 0;
         const priceMap = {};
         parsed.forEach(r => {
-          if (r.is_direct_match && r.matched_ticker) {
-            priceMap[r.matched_ticker] = r.price;
-            priceUpdates++;
+          const bbgClean = r.bbg_ticker.replace(/\s+Equity$/i, '').trim();
+          const localTicker = bbgClean.replace(/\s+/g, '.');
+          const alts = [localTicker, bbgClean, bbgClean.split(' ')[0]];
+          for (const alt of alts) {
+            if (tickerSet.has(alt)) { priceMap[alt] = r.price; priceUpdates++; break; }
           }
         });
 
-        /* Debug: log a sample of price mappings */
-        const priceEntries = Object.entries(priceMap);
-        console.log(`[XA Data Hub] priceMap has ${priceEntries.length} entries (built from ALL ${parsed.length} rows, not just filtered ${filtered.length}).`);
-        console.log(`[XA Data Hub] NAS.OL in priceMap? → ${priceMap['NAS.OL']} (should be ~17 if upload has it)`);
-        console.log(`[XA Data Hub] All priceMap keys:`, Object.keys(priceMap).sort().join(', '));
-        /* Flag small-cap operator stocks that would have been missed by $1bn filter */
-        const smallCapHits = parsed.filter(r => r.is_direct_match && r.matched_ticker && r.mkt_cap_m > 0 && r.mkt_cap_m < 1000);
-        if (smallCapHits.length) console.log(`[XA Data Hub] ⚠ ${smallCapHits.length} operator stocks under $1bn got prices (would have been missed by old filter):`, smallCapHits.map(r => `${r.matched_ticker}=$${r.price} (mktcap ${r.mkt_cap_m}M)`).join(', '));
-
-        /* Track unmatched operator stocks */
-        const allOpStocks = operators.flatMap(op => op.stocks.map(s => ({ticker: s.ticker, name: s.name, opName: op.name})));
-        const unmatched = allOpStocks.filter(s => !priceMap[s.ticker]);
-
-        /* Debug: log matching stats to console */
-        console.log(`[XA Data Hub] Sheet: "${sheetName}", Parsed: ${parsed.length}, Filtered: ${filtered.length}, Price matches: ${priceUpdates}/${allOpStocks.length}`);
-        if (unmatched.length) {
-          console.log(`[XA Data Hub] ${unmatched.length} unmatched XA tickers:`);
-          const uploadStripped = {};
-          filtered.forEach(r => { uploadStripped[stripTicker(r.bbg_ticker)] = r.bbg_ticker; });
-          unmatched.forEach(s => {
-            const st = stripTicker(s.ticker);
-            const inUpload = uploadStripped[st];
-            console.log(`  ${s.ticker} → strip="${st}" | ${inUpload ? '⚠ FOUND as "'+inUpload+'" (matching bug!)' : '✗ not in upload'} | ${s.opName}: ${s.name}`);
+        parsed.forEach(r => {
+          const bbgClean = r.bbg_ticker.replace(/\s+Equity$/i, '').trim();
+          const localTicker = bbgClean.replace(/\s+/g, '.');
+          const matchedOps = [];
+          operators.forEach(op => {
+            if (op.stocks.some(s => s.ticker === localTicker || s.ticker === bbgClean || s.ticker === bbgClean.split(' ')[0])) {
+              matchedOps.push(op.id);
+            }
           });
-        } else {
-          console.log('[XA Data Hub] ✓ All 132 operator stocks matched!');
-        }
+          r.matched_ops = matchedOps;
+          r.is_direct_match = matchedOps.length > 0;
+        });
 
-        const snapDate = new Date().toISOString().slice(0,10);
+        const unmatched = allOpStocks.filter(s => !priceMap[s.ticker]).map(s => ({ticker: s.ticker, name: s.name, opName: s.opName}));
 
-        /* ═══ CRITICAL: Update global price map and mutate OPERATORS directly ═══ */
         window.XA_PRICES = priceMap;
         let patchCount = 0;
         OPERATORS.forEach(op => {
           op.stocks.forEach(s => {
-            if (priceMap[s.ticker] != null) {
-              s.currentPrice = priceMap[s.ticker];
-              patchCount++;
-            }
+            if (priceMap[s.ticker] != null) { s.currentPrice = priceMap[s.ticker]; patchCount++; }
           });
         });
-        console.log(`[XA Data Hub] Patched ${patchCount} prices directly into OPERATORS. NAS.OL=${OPERATORS.find(o=>o.id==='tig')?.stocks.find(s=>s.ticker==='NAS.OL')?.currentPrice}`);
+        console.log(`[XA Data Hub] Patched ${patchCount} prices. Matches: ${priceUpdates}/${allOpStocks.length}`);
 
-        const newSnap = {
-          date: snapDate,
-          fileName: file.name,
-          totalParsed: parsed.length,
-          totalFiltered: filtered.length,
-          priceUpdates,
-          priceMap,
-          unmatched,
-          universe: filtered,
-        };
-
+        const snapDate = new Date().toISOString().slice(0,10);
+        const newSnap = { date: snapDate, fileName: file.name, totalParsed: parsed.length, totalFiltered: filtered.length, priceUpdates, priceMap, unmatched, universe: filtered };
         setSnapData(newSnap);
 
-        /* Save priceMap to dedicated small key — always succeeds */
-        try {
-          localStorage.setItem('xa_prices', JSON.stringify(priceMap));
-          console.log('[XA Data Hub] priceMap saved to xa_prices key OK (' + Object.keys(priceMap).length + ' entries)');
-        } catch(e) {
-          console.warn('[XA Data Hub] xa_prices save failed:', e.message);
-        }
-
-        /* Try saving full snap (may fail due to size) */
-        try {
-          LS.set('xa_snap_v3', newSnap);
-          console.log('[XA Data Hub] Snap saved to localStorage OK');
-        } catch(e) {
-          console.warn('[XA Data Hub] Full save failed, trying slim...');
-          try { LS.set('xa_snap_v3', {...newSnap, universe: []}); console.log('[XA Data Hub] Slim save OK'); }
-          catch(e2) {
-            console.warn('[XA Data Hub] Slim save failed, saving priceMap only...');
-            try { LS.set('xa_snap_v3', {date: newSnap.date, priceMap, priceUpdates}); } catch(e3) {}
+        try { localStorage.setItem('xa_prices', JSON.stringify(priceMap)); } catch(e) {}
+        try { LS.set('xa_snap_v3', newSnap); } catch(e) {
+          try { LS.set('xa_snap_v3', {...newSnap, universe: []}); } catch(e2) {
+            try { LS.set('xa_snap_v3', {date: snapDate, priceMap, priceUpdates}); } catch(e3) {}
           }
         }
 
-        /* ═══ AUTO-PUBLISH api.json for XA-Coach ═══ */
+        /* Auto-download api.json */
         try {
           const apiOps = operators.map(op => {
-            const liveStocks = op.stocks.map(s => ({
-              ...s,
-              currentPrice: priceMap[s.ticker] != null ? priceMap[s.ticker] : s.currentPrice,
-            }));
-            const results = liveStocks.map(s => {
-              const eng = runEngine(s, op.driverMap, globalDrivers);
-              return {
-                ticker: s.ticker,
-                name: s.name,
-                side: s.verdict,
-                currentPrice: s.currentPrice,
-                prices: s.prices,
-                ev: eng?.ev ? +eng.ev.toFixed(2) : null,
-                rr_pct: eng?.rr ? +eng.rr.toFixed(2) : null,
-                skew: eng?.skew ? +eng.skew.toFixed(3) : null,
-                verdict: eng?.vd || null,
-                tier: eng?.tier || null,
-                probabilities: eng?.pr?.map(p => +p.toFixed(2)) || [],
-                sensitivity: s.sens || {},
-              };
+            const results = op.stocks.map(s => {
+              const eng = runEngine(s, op.macroMap, masterMacros);
+              const pt = getConvictionPT(s, eng);
+              return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:s.currentPrice,
+                bull_pt:pt.bullPT, bear_pt:pt.bearPT, conviction:pt.conviction,
+                ev:eng?.ev?+eng.ev.toFixed(2):null, rr_pct:eng?.rr?+eng.rr.toFixed(2):null,
+                skew:eng?.skew?+eng.skew.toFixed(3):null, verdict:eng?.vd||null, tier:eng?.tier||null,
+                probabilities:eng?.pr?.map(p=>+p.toFixed(2))||[], sensitivity:s.sens||{} };
             });
-            const driverSignals = op.driverMap.map(m => {
-              const gd = globalDrivers.find(d => d.id === m.driverId);
-              return { id: m.driverId, label: gd?.label || m.driverId, weight: m.weight, signal: gd?.signal ?? 0 };
+            const macroSignals = op.macroMap.map(m => {
+              const mm = masterMacros.find(d => d.id === m.macroId);
+              return { id:m.macroId, label:mm?.label||m.macroId, weight:m.weight, signal:mm?.signal??0 };
             });
-            return {
-              id: op.id, name: op.name, team: op.team, color: op.color, desc: op.desc,
-              drivers: driverSignals,
-              stocks: results,
-            };
+            return { id:op.id, name:op.name, category:op.category, team:op.team, color:op.color, desc:op.desc, drivers:macroSignals, stocks:results };
           });
+          download(JSON.stringify({version:'4.0',generated:new Date().toISOString(),snapDate,operators:apiOps},null,2),'api.json','application/json');
+          console.log('[XA Data Hub] api.json downloaded');
+        } catch(apiErr) { console.warn('[XA Data Hub] api.json failed:', apiErr.message); }
 
-          const apiPayload = {
-            version: '3.0',
-            generated: new Date().toISOString(),
-            snapDate: snapDate,
-            snapFile: file.name,
-            priceMatches: priceUpdates,
-            totalStocks: allOpStocks.length,
-            unmatchedCount: unmatched.length,
-            operators: apiOps,
-          };
-
-          download(JSON.stringify(apiPayload, null, 2), 'api.json', 'application/json');
-          console.log('[XA Data Hub] api.json downloaded for XA-Coach');
-        } catch(apiErr) {
-          console.warn('[XA Data Hub] api.json generation failed:', apiErr.message);
-        }
         setParsing(false);
-
-        /* Reload page to force React to render with patched OPERATORS */
-        console.log('[XA Data Hub] Reloading page to apply prices...');
+        console.log('[XA Data Hub] Reloading...');
         setTimeout(() => window.location.reload(), 500);
-      } catch(err) {
-        setError('Parse error: ' + err.message);
-        setParsing(false);
-      }
+      } catch(err) { setError('Parse error: ' + err.message); setParsing(false); }
     };
     reader.readAsArrayBuffer(file);
   };
@@ -1388,69 +1080,51 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
   const handleDragLeave = () => setDragOver(false);
   const handleClick = () => fileRef.current?.click();
   const handleFileInput = (e) => { if (e.target.files[0]) parseFile(e.target.files[0]); };
-  const clearSnap = () => { if(confirm('Clear universe data?')){ window.XA_PRICES = {}; setSnapData(null); localStorage.removeItem('xa_snap_v3'); localStorage.removeItem('xa_prices'); }};
+  const clearSnap = () => { if(confirm('Clear universe data?')){ window.XA_PRICES={}; setSnapData(null); localStorage.removeItem('xa_snap_v3'); localStorage.removeItem('xa_prices'); }};
 
-  /* Coverage stats per operator */
   const opCoverage = useMemo(() => {
     if (!snapData?.universe) return {};
     const cov = {};
-    operators.forEach(op => { cov[op.id] = { total: 0, matched: 0, names: [] }; });
+    operators.forEach(op => { cov[op.id] = { total: 0, matched: 0 }; });
     snapData.universe.forEach(r => {
-      r.matched_ops.forEach(opId => {
-        if (cov[opId]) { cov[opId].total++; cov[opId].names.push(r); }
-        if (r.is_direct_match && cov[opId]) cov[opId].matched++;
+      (r.matched_ops||[]).forEach(opId => {
+        if (cov[opId]) { cov[opId].total++; if (r.is_direct_match) cov[opId].matched++; }
       });
     });
     return cov;
   }, [snapData, operators]);
 
-  /* Filtered + sorted universe for table */
   const displayData = useMemo(() => {
     if (!snapData?.universe) return [];
     let d = [...snapData.universe];
-    if (opFilter !== 'all') d = d.filter(r => r.matched_ops.includes(opFilter));
-    if (searchQ) { const q = searchQ.toLowerCase(); d = d.filter(r => r.name.toLowerCase().includes(q) || r.bbg_ticker.toLowerCase().includes(q) || r.country.toLowerCase().includes(q)); }
+    if (opFilter !== 'all') d = d.filter(r => (r.matched_ops||[]).includes(opFilter));
+    if (searchQ) { const q = searchQ.toLowerCase(); d = d.filter(r => r.name.toLowerCase().includes(q) || r.bbg_ticker.toLowerCase().includes(q)); }
     d.sort((a,b) => {
-      const av = a[sortCol] || 0, bv = b[sortCol] || 0;
-      if (typeof av === 'string') return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-      return sortDir === 'asc' ? av - bv : bv - av;
+      const av = a[sortCol]||0, bv = b[sortCol]||0;
+      if (typeof av === 'string') return sortDir==='asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      return sortDir==='asc' ? av-bv : bv-av;
     });
-    return d.slice(0, 200); /* Cap display at 200 for performance */
+    return d.slice(0, 200);
   }, [snapData, opFilter, searchQ, sortCol, sortDir]);
 
-  const toggleSort = (col) => {
-    if (sortCol === col) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    else { setSortCol(col); setSortDir('desc'); }
-  };
-
-  const fmt = (v, dp=1) => v ? (typeof v === 'number' ? v.toFixed(dp) : v) : '—';
+  const toggleSort = (col) => { if (sortCol===col) setSortDir(sortDir==='asc'?'desc':'asc'); else { setSortCol(col); setSortDir('desc'); } };
+  const fmtV = (v, dp=1) => v ? (typeof v === 'number' ? v.toFixed(dp) : v) : '—';
   const fmtK = (v) => v >= 1e6 ? (v/1e6).toFixed(0)+'T' : v >= 1e3 ? (v/1e3).toFixed(0)+'B' : v ? v.toFixed(0)+'M' : '—';
 
   return <div style={{padding:32,maxWidth:1400,margin:'0 auto',animation:'fadeIn .3s ease'}}>
     <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--y)',fontWeight:400,marginBottom:6}}>Data Hub</h1>
     <p style={{fontSize:12,color:'var(--fg4)',marginBottom:28}}>Bloomberg universe upload · Friday COB snap · Operator screening</p>
 
-    {/* Upload zone */}
-    <div
-      onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onClick={handleClick}
-      style={{
-        border: `2px dashed ${dragOver ? 'var(--g)' : 'var(--border2)'}`,
-        borderRadius: 8, padding: 40, textAlign: 'center', cursor: 'pointer',
-        background: dragOver ? 'rgba(0,230,118,.04)' : 'var(--bg1)',
-        transition: 'all .2s', marginBottom: 24,
-      }}>
+    <div onDrop={handleDrop} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onClick={handleClick}
+      style={{border:`2px dashed ${dragOver?'var(--g)':'var(--border2)'}`,borderRadius:8,padding:40,textAlign:'center',cursor:'pointer',background:dragOver?'rgba(0,230,118,.04)':'var(--bg1)',transition:'all .2s',marginBottom:24}}>
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileInput} style={{display:'none'}}/>
-      {parsing ? <div style={{color:'var(--y)',fontFamily:'var(--mono)',fontSize:13}}>⏳ Parsing universe...</div> :
-        <div>
-          <div style={{fontSize:28,marginBottom:8}}>{dragOver ? '📥' : '📊'}</div>
+      {parsing ? <div style={{color:'var(--y)',fontFamily:'var(--mono)',fontSize:13}}>⏳ Parsing...</div> :
+        <div><div style={{fontSize:28,marginBottom:8}}>{dragOver?'📥':'📊'}</div>
           <div style={{fontSize:13,color:'var(--fg)',fontFamily:'var(--mono)',marginBottom:4}}>Drop xa_universe_YYYYMMDD.xlsx here</div>
-          <div style={{fontSize:11,color:'var(--fg4)'}}>or click to browse · Reads "Upload" sheet · Friday COB only</div>
-        </div>
-      }
+          <div style={{fontSize:11,color:'var(--fg4)'}}>or click to browse</div></div>}
     </div>
     {error && <div style={{padding:'10px 16px',background:'rgba(255,61,113,.1)',border:'1px solid rgba(255,61,113,.3)',borderRadius:6,color:'var(--r)',fontSize:12,fontFamily:'var(--mono)',marginBottom:16}}>{error}</div>}
 
-    {/* Snap status */}
     {snapData && <div style={{background:'var(--bg1)',border:'1px solid var(--border2)',borderRadius:8,padding:20,marginBottom:24}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -1459,40 +1133,27 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
         </div>
         <button onClick={clearSnap} style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',background:'transparent',border:'1px solid var(--border)',borderRadius:3,padding:'3px 8px',cursor:'pointer'}}>Clear</button>
       </div>
-
       <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:20}}>
-        {[
-          ['File', snapData.fileName, 'var(--fg3)'],
-          ['Names', snapData.totalFiltered.toLocaleString() + ' (>$1bn)', 'var(--b)'],
-          ['Raw Parsed', snapData.totalParsed.toLocaleString(), 'var(--fg3)'],
-          ['Price Matches', snapData.priceUpdates + ' / ' + operators.reduce((a,o)=>a+o.stocks.length,0), 'var(--g)'],
-          ['Snap Date', snapData.date, 'var(--y)'],
-        ].map(([l,v,c],i) => <div key={i} style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
-          <div style={{fontSize:9,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:4}}>{l}</div>
-          <div style={{fontSize:14,fontWeight:600,color:c,fontFamily:'var(--mono)'}}>{v}</div>
-        </div>)}
+        {[['File',snapData.fileName,'var(--fg3)'],['Names',snapData.totalFiltered?.toLocaleString()+' (>$1bn)','var(--b)'],['Raw',snapData.totalParsed?.toLocaleString(),'var(--fg3)'],['Matches',snapData.priceUpdates+' / '+operators.reduce((a,o)=>a+o.stocks.length,0),'var(--g)'],['Date',snapData.date,'var(--y)']].map(([l,v,c],i) =>
+          <div key={i} style={{background:'var(--bg2)',borderRadius:6,padding:'12px 14px'}}>
+            <div style={{fontSize:9,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:4}}>{l}</div>
+            <div style={{fontSize:14,fontWeight:600,color:c,fontFamily:'var(--mono)'}}>{v}</div>
+          </div>)}
       </div>
-
-      {/* Operator coverage grid */}
       <div style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:10}}>Operator Coverage</div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8,marginBottom:8}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8}}>
         {operators.map(op => {
-          const cov = opCoverage[op.id] || {total:0, matched:0};
+          const cov = opCoverage[op.id]||{total:0,matched:0};
           return <div key={op.id} style={{background:'var(--bg2)',borderRadius:6,padding:'10px 12px',borderLeft:`3px solid ${op.color}`}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
               <span style={{fontSize:11,fontWeight:700,color:op.color,fontFamily:'var(--mono)'}}>{op.icon} {op.name}</span>
-              <span style={{fontSize:10,color:'var(--fg3)',fontFamily:'var(--mono)'}}>{cov.total} names</span>
-            </div>
-            <div style={{display:'flex',gap:8,fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>
-              <span>📌 {cov.matched} matched</span>
-              <span>🔍 {cov.total - cov.matched} screened</span>
+              <span style={{fontSize:10,color:'var(--fg3)',fontFamily:'var(--mono)'}}>{cov.total}</span>
             </div>
           </div>;
         })}
       </div>
     </div>}
 
-    {/* API Endpoint info */}
     {snapData && <div style={{background:'var(--bg1)',border:'1px solid rgba(99,102,241,.2)',borderRadius:8,padding:16,marginBottom:24}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
         <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'#6366f1'}}>⚡ XA-Coach API</span>
@@ -1503,213 +1164,238 @@ function DataView({operators, globalDrivers, snapData, setSnapData}) {
       </div>
       <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>
         Drop api.json into your local repo folder, then <code style={{color:'var(--fg3)'}}>git add api.json; git push</code> to publish.
-        XA-Coach fetches: <code style={{color:'var(--fg3)'}}>fetch('https://willhp-up.github.io/Upside-XA/api.json').then(r =&gt; r.json())</code>
       </div>
       <button onClick={() => {
-        /* Re-generate and download api.json from current state */
         try {
           const apiOps = operators.map(op => {
             const results = op.stocks.map(s => {
-              const eng = runEngine(s, op.driverMap, globalDrivers);
-              const cp = s.currentPrice;
-              return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:cp,
-                prices:s.prices, ev:eng?.ev?+eng.ev.toFixed(2):null, rr_pct:eng?.rr?+eng.rr.toFixed(2):null,
-                skew:eng?.skew?+eng.skew.toFixed(3):null, verdict:eng?.vd||null, tier:eng?.tier||null,
-                probabilities:eng?.pr?.map(p=>+p.toFixed(2))||[], sensitivity:s.sens||{} };
+              const eng = runEngine(s, op.macroMap, masterMacros);
+              const pt = getConvictionPT(s, eng);
+              return { ticker:s.ticker, name:s.name, side:s.verdict, currentPrice:s.currentPrice,
+                bull_pt:pt.bullPT, bear_pt:pt.bearPT, conviction:pt.conviction,
+                ev:eng?.ev?+eng.ev.toFixed(2):null, rr_pct:eng?.rr?+eng.rr.toFixed(2):null,
+                skew:eng?.skew?+eng.skew.toFixed(3):null, verdict:eng?.vd||null, tier:eng?.tier||null };
             });
-            const driverSignals = op.driverMap.map(m => {
-              const gd = globalDrivers.find(d => d.id === m.driverId);
-              return { id:m.driverId, label:gd?.label||m.driverId, weight:m.weight, signal:gd?.signal??0 };
+            const macroSignals = op.macroMap.map(m => {
+              const mm = masterMacros.find(d => d.id === m.macroId);
+              return { id:m.macroId, label:mm?.label||m.macroId, weight:m.weight, signal:mm?.signal??0 };
             });
-            return { id:op.id, name:op.name, team:op.team, stocks:results, drivers:driverSignals };
+            return { id:op.id, name:op.name, category:op.category, team:op.team, stocks:results, drivers:macroSignals };
           });
-          download(JSON.stringify({version:'3.0',generated:new Date().toISOString(),snapDate:snapData.date,operators:apiOps},null,2),'api.json','application/json');
+          download(JSON.stringify({version:'4.0',generated:new Date().toISOString(),snapDate:snapData.date,operators:apiOps},null,2),'api.json','application/json');
         } catch(e) { console.warn('api.json re-gen failed:', e); }
       }} style={{marginTop:8,fontSize:10,fontFamily:'var(--mono)',padding:'4px 12px',borderRadius:4,cursor:'pointer',border:'1px solid rgba(99,102,241,.3)',background:'rgba(99,102,241,.08)',color:'#6366f1'}}>
         ↓ Re-download api.json
       </button>
     </div>}
 
-    {/* Unmatched tickers — shows which operator stocks didn't get a price update */}
     {snapData?.unmatched?.length > 0 && <div style={{background:'var(--bg1)',border:'1px solid rgba(255,61,113,.2)',borderRadius:8,padding:16,marginBottom:24}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
-        <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'var(--r)'}}>⚠ Unmatched Operator Stocks ({snapData.unmatched.length})</span>
-        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>These names kept their hardcoded prices — BBG ticker not found in upload</span>
-      </div>
-      <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
-        {snapData.unmatched.map((s,i) => <span key={i} style={{fontSize:9,fontFamily:'var(--mono)',padding:'2px 6px',borderRadius:3,background:'rgba(255,61,113,.08)',color:'var(--r)',border:'1px solid rgba(255,61,113,.15)'}} title={s.opName + ': ' + s.name}>{s.ticker}</span>)}
+      <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'var(--r)'}}>⚠ Unmatched ({snapData.unmatched.length})</span>
+      <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:8}}>
+        {snapData.unmatched.map((s,i) => <span key={i} style={{fontSize:9,fontFamily:'var(--mono)',padding:'2px 6px',borderRadius:3,background:'rgba(255,61,113,.08)',color:'var(--r)',border:'1px solid rgba(255,61,113,.15)'}} title={s.opName+': '+s.name}>{s.ticker}</span>)}
       </div>
     </div>}
 
-    {/* Universe browser */}
-    {snapData?.universe?.length > 0 && <div style={{background:'var(--bg1)',border:'1px solid var(--border2)',borderRadius:8,overflow:'hidden'}}>
-      <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
-        <div style={{fontSize:13,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg)'}}>Universe Browser</div>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search name / ticker / country..."
-            style={{padding:'5px 10px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',width:220}}/>
-          <select value={opFilter} onChange={e=>setOpFilter(e.target.value)}
-            style={{padding:'5px 10px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
-            <option value="all">All Operators</option>
-            {operators.map(o => <option key={o.id} value={o.id}>{o.icon} {o.name} ({(opCoverage[o.id]||{total:0}).total})</option>)}
-          </select>
-          <span style={{fontSize:10,color:'var(--fg4)',fontFamily:'var(--mono)'}}>{displayData.length}{displayData.length>=200?'+':''} shown</span>
-        </div>
+    {displayData.length > 0 && <div style={{marginTop:16}}>
+      <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center'}}>
+        <select value={opFilter} onChange={e => setOpFilter(e.target.value)} style={{padding:'6px 10px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)'}}>
+          <option value="all">All Operators</option>
+          {operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
+        <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="Search..." style={{padding:'6px 10px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',flex:1,maxWidth:250}}/>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{displayData.length} shown</span>
       </div>
-
-      <div style={{overflowX:'auto'}}>
-        <table style={{width:'100%',borderCollapse:'collapse',fontSize:10,fontFamily:'var(--mono)'}}>
-          <thead>
-            <tr style={{background:'var(--bg2)'}}>
-              {[
-                ['bbg_ticker','Ticker',90],['name','Name',160],['country','Cty',42],['gics_sector','Sector',120],
-                ['ccy','Ccy',38],['mkt_cap_m','Mkt Cap',80],['price','Price',72],
-                ['fwd_pe','Fwd P/E',60],['fwd_ev_ebitda','EV/EB',60],['pb','P/B',50],
-                ['roe_pct','ROE%',55],['op_margin_pct','OpM%',55],['chg_52w_pct','52w%',55],
-                ['eps_rev_3m_pct','EPS Rev',60],['nd_ebitda','ND/EB',55],['div_yield_pct','DY%',50],
-              ].map(([col,label,w]) => <th key={col} onClick={()=>toggleSort(col)} style={{
-                padding:'8px 6px',textAlign:col==='name'||col==='gics_sector'?'left':'right',
-                color:sortCol===col?'var(--g)':'var(--fg4)',cursor:'pointer',borderBottom:'1px solid var(--border)',
-                fontWeight:700,fontSize:9,letterSpacing:'.04em',whiteSpace:'nowrap',minWidth:w,
-              }}>{label} {sortCol===col?(sortDir==='asc'?'↑':'↓'):''}</th>)}
-              <th style={{padding:'8px 6px',textAlign:'center',color:'var(--fg4)',borderBottom:'1px solid var(--border)',fontSize:9,fontWeight:700,minWidth:100}}>Operators</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayData.map((r,i) => <tr key={i} style={{borderBottom:'1px solid var(--border)',background:r.is_direct_match?'rgba(0,230,118,.03)':'transparent'}}>
-              <td style={{padding:'6px',color:r.is_direct_match?'var(--g)':'var(--fg2)',fontWeight:r.is_direct_match?700:400}}>{r.bbg_ticker}</td>
-              <td style={{padding:'6px',color:'var(--fg)',textAlign:'left',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.country}</td>
-              <td style={{padding:'6px',textAlign:'left',color:'var(--fg4)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.gics_sector}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg4)'}}>{r.ccy}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{fmtK(r.mkt_cap_m)}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg)',fontWeight:600}}>{fmt(r.price,2)}</td>
-              <td style={{padding:'6px',textAlign:'right',color:r.fwd_pe>0&&r.fwd_pe<15?'var(--g)':r.fwd_pe>40?'var(--r)':'var(--fg3)'}}>{r.fwd_pe?fmt(r.fwd_pe)+'x':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.fwd_ev_ebitda?fmt(r.fwd_ev_ebitda)+'x':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.pb?fmt(r.pb)+'x':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:r.roe_pct>15?'var(--g)':'var(--fg3)'}}>{r.roe_pct?fmt(r.roe_pct)+'%':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.op_margin_pct?fmt(r.op_margin_pct)+'%':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:r.chg_52w_pct>20?'var(--g)':r.chg_52w_pct<-20?'var(--r)':'var(--fg3)'}}>{r.chg_52w_pct?fmt(r.chg_52w_pct)+'%':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:r.eps_rev_3m_pct>0?'var(--g)':r.eps_rev_3m_pct<0?'var(--r)':'var(--fg3)'}}>{r.eps_rev_3m_pct?fmt(r.eps_rev_3m_pct)+'%':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:r.nd_ebitda>3?'var(--r)':'var(--fg3)'}}>{r.nd_ebitda?fmt(r.nd_ebitda)+'x':'—'}</td>
-              <td style={{padding:'6px',textAlign:'right',color:'var(--fg3)'}}>{r.div_yield_pct?fmt(r.div_yield_pct)+'%':'—'}</td>
-              <td style={{padding:'6px',textAlign:'center'}}>
-                {r.matched_ops.map(opId => {
-                  const op = operators.find(o=>o.id===opId);
-                  return op ? <span key={opId} title={op.name} style={{display:'inline-block',fontSize:9,padding:'1px 4px',borderRadius:3,marginRight:2,background:`${op.color}15`,color:op.color,border:`1px solid ${op.color}30`}}>{op.icon}</span> : null;
-                })}
-              </td>
-            </tr>)}
-          </tbody>
+      <div style={{overflowX:'auto',borderRadius:6,border:'1px solid var(--border)'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,fontFamily:'var(--mono)'}}>
+          <thead><tr style={{background:'var(--bg2)'}}>
+            {[['bbg_ticker','Ticker'],['name','Name'],['price','Price'],['mkt_cap_usd_m','Mkt Cap'],['country','Country'],['sector','Sector'],['pe','PE']].map(([k,l]) =>
+              <th key={k} onClick={() => toggleSort(k)} style={{padding:'8px 10px',textAlign:'left',cursor:'pointer',color:'var(--fg3)',fontSize:9,textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid var(--border)',whiteSpace:'nowrap'}}>{l} {sortCol===k?(sortDir==='asc'?'↑':'↓'):''}</th>)}
+          </tr></thead>
+          <tbody>{displayData.map((r,i) => <tr key={i} style={{borderBottom:'1px solid var(--border)',background:r.is_direct_match?'rgba(0,230,118,.03)':'transparent'}}>
+            <td style={{padding:'6px 10px',color:r.is_direct_match?'var(--g)':'var(--fg)',fontWeight:r.is_direct_match?700:400}}>{r.bbg_ticker}</td>
+            <td style={{padding:'6px 10px',color:'var(--fg3)'}}>{r.name}</td>
+            <td style={{padding:'6px 10px',color:'var(--fg)'}}>{fmtV(r.price,2)}</td>
+            <td style={{padding:'6px 10px',color:'var(--b)'}}>{fmtK(r.mkt_cap_usd_m)}</td>
+            <td style={{padding:'6px 10px',color:'var(--fg4)'}}>{r.country}</td>
+            <td style={{padding:'6px 10px',color:'var(--fg4)'}}>{r.sector}</td>
+            <td style={{padding:'6px 10px',color:'var(--fg3)'}}>{fmtV(r.pe)}</td>
+          </tr>)}</tbody>
         </table>
       </div>
     </div>}
   </div>;
 }
 
-/* ═══════════════ EXPORT ═══════════════ */
-function ExportView({operators, globalDrivers}) {
+/* ═══════════════ EXPORT VIEW ═══════════════ */
+function ExportView({operators, masterMacros, opToggles}) {
   const [scope, setScope] = useState('all');
-  const [selOp, setSelOp] = useState(operators[0]?.id||'');
+  const [catFilter, setCatFilter] = useState('all');
   const [format, setFormat] = useState('csv');
 
-  const doExport = () => {
-    const date = new Date().toISOString().slice(0,10);
-    const ops = scope === 'all' ? operators : operators.filter(o => o.id === selOp);
-    if (format === 'json') {
-      download(JSON.stringify({operators: ops.map(o => ({...o, stats: computeOpStats(o, globalDrivers)})), exported: date}, null, 2), `xa_${scope}_${date}.json`, 'application/json');
-    } else {
-      const h = ['ticker','name','verdict','operator','team','current_price','ev','rr_pct','skew','engine_verdict','tier',...SCENARIOS.map(s=>`price_${s.label.replace(/\s/g,'_')}`)];
-      let csv = h.join(',') + '\n';
-      ops.forEach(op => {
-        op.stocks.forEach(s => {
-          const eng = runEngine(s, op.driverMap, globalDrivers);
-          const cp = s.currentPrice;
-          csv += [s.ticker, s.name, s.verdict, op.name, op.team, cp, eng?.ev?.toFixed(2)||'', eng?.rr?.toFixed(1)||'', eng?.skew?.toFixed(2)||'', eng?.vd||'', eng?.tier||'', ...(s.prices||[]).map(p=>p)].join(',') + '\n';
+  const scoped = useMemo(() => {
+    let ops = [...operators];
+    if (catFilter !== 'all') ops = ops.filter(o => o.category === catFilter);
+    if (scope !== 'all') ops = ops.filter(o => o.id === scope);
+    return ops;
+  }, [operators, scope, catFilter]);
+
+  const rows = useMemo(() => {
+    const out = [];
+    scoped.forEach(op => {
+      op.stocks.forEach(s => {
+        const activeMap = op.macroMap.filter(m => {
+          const key = `${op.id}__${m.macroId}`;
+          return opToggles[key] !== false;
+        });
+        const eng = runEngine(s, activeMap, masterMacros);
+        const pt = getConvictionPT(s, eng);
+        out.push({
+          ticker: s.ticker, name: s.name, side: s.verdict,
+          operator: op.name, category: op.category, team: op.team,
+          current_price: s.currentPrice,
+          bull_pt: pt.bullPT, bear_pt: pt.bearPT, conviction: pt.conviction,
+          ev: eng?.ev, rr_pct: eng?.rr, skew: eng?.skew,
+          engine_verdict: eng?.vd, tier: eng?.tier,
         });
       });
-      download(csv, `xa_${scope}_${date}.csv`);
+    });
+    return out;
+  }, [scoped, masterMacros, opToggles]);
+
+  const doExport = () => {
+    const ts = new Date().toISOString().slice(0,10);
+    if (format === 'csv') {
+      const headers = ['ticker','name','side','operator','category','team','current_price','bull_pt','bear_pt','conviction','ev','rr_pct','skew','engine_verdict','tier'];
+      const csv = [headers.join(','), ...rows.map(r => headers.map(h => {
+        const v = r[h];
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'number') return v.toFixed(2);
+        return `"${String(v).replace(/"/g,'""')}"`;
+      }).join(','))].join('\n');
+      download(csv, `xa_export_${ts}.csv`);
+    } else {
+      download(JSON.stringify({version:'4.0', exported:new Date().toISOString(), scope, category:catFilter, stocks:rows}, null, 2), `xa_export_${ts}.json`, 'application/json');
     }
   };
 
-  const totalS = operators.reduce((a,o) => a + o.stocks.length, 0);
+  const categories = ['GRS','Asian GRS'];
+  const longs = rows.filter(r => r.side === 'long');
+  const shorts = rows.filter(r => r.side === 'short');
+  const strongConv = rows.filter(r => r.conviction === 'STRONG').length;
+  const modConv = rows.filter(r => r.conviction === 'MODERATE').length;
 
-  return <div style={{padding:32,maxWidth:600,margin:'0 auto',animation:'fadeIn .3s ease'}}>
-    <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--b)',fontWeight:400,marginBottom:6}}>Export Centre</h1>
-    <p style={{fontSize:12,color:'var(--fg4)',marginBottom:28}}>Export with full engine output for XA-Coach or backup</p>
-
-    <div style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Scope</div>
-    <div style={{display:'flex',gap:6,marginBottom:20}}>
-      {[['all',`All Operators (${totalS})`],['single','Single Operator']].map(([v,l]) =>
-        <Btn key={v} active={scope===v} color="var(--b)" onClick={() => setScope(v)} style={{flex:1}}>{l}</Btn>)}
+  return <div style={{padding:32,maxWidth:1100,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:24}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--g)',fontWeight:400,marginBottom:6}}>Export Centre</h1>
+      <p style={{fontSize:12,color:'var(--fg4)'}}>Conviction-based price targets · CSV / JSON · Scoped by category, operator, or all.</p>
     </div>
-    {scope==='single' && <div style={{marginBottom:20}}>
-      <select value={selOp} onChange={e => setSelOp(e.target.value)} style={{width:'100%',padding:'8px 12px',fontSize:12,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',cursor:'pointer'}}>
-        {operators.map(o => <option key={o.id} value={o.id}>{o.name} — {o.team} ({o.stocks.length})</option>)}
-      </select>
+
+    <div style={{display:'flex',gap:6,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
+      <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginRight:4}}>CATEGORY:</span>
+      <Btn active={catFilter==='all'} color="var(--fg3)" onClick={() => {setCatFilter('all');setScope('all')}}>All</Btn>
+      {categories.map(c => <Btn key={c} active={catFilter===c} color="var(--b)" onClick={() => {setCatFilter(c);setScope('all')}}>{c}</Btn>)}
+
+      <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginLeft:12,marginRight:4}}>OPERATOR:</span>
+      <Btn active={scope==='all'} color="var(--fg3)" onClick={() => setScope('all')}>All</Btn>
+      {operators.filter(o => catFilter==='all' || o.category===catFilter).map(o =>
+        <Btn key={o.id} active={scope===o.id} color={o.color} onClick={() => setScope(o.id)}>{o.icon} {o.name}</Btn>)}
+
+      <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginLeft:12,marginRight:4}}>FORMAT:</span>
+      <Btn active={format==='csv'} color="var(--y)" onClick={() => setFormat('csv')}>CSV</Btn>
+      <Btn active={format==='json'} color="var(--p)" onClick={() => setFormat('json')}>JSON</Btn>
+    </div>
+
+    <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:10,marginBottom:20}}>
+      {[
+        ['Total', rows.length, 'var(--fg)'],
+        ['Longs', longs.length, 'var(--g)'],
+        ['Shorts', shorts.length, 'var(--r)'],
+        ['Strong Conv', strongConv, 'var(--y)'],
+        ['Moderate Conv', modConv, 'var(--b)'],
+        ['Operators', scoped.length, 'var(--p)'],
+      ].map(([l,v,c]) => <div key={l} style={{padding:'12px 14px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:6}}>
+        <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:4}}>{l}</div>
+        <div style={{fontSize:18,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
+      </div>)}
+    </div>
+
+    <button onClick={doExport} style={{padding:'12px 28px',borderRadius:6,fontSize:13,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',border:'none',background:'var(--g)',color:'#000',marginBottom:24,transition:'opacity .15s'}}
+      onMouseEnter={e=>e.target.style.opacity=0.85} onMouseLeave={e=>e.target.style.opacity=1}>
+      ↓ Export {rows.length} Stocks as {format.toUpperCase()}
+    </button>
+
+    <div style={{background:'var(--bg1)',borderRadius:8,border:'1px solid var(--border)',padding:16,marginBottom:20}}>
+      <div style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg3)',marginBottom:10,textTransform:'uppercase',letterSpacing:'.1em'}}>Conviction → Price Target Logic</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+        {[
+          ['STRONG', 'Deep Bull / Deep Bear', 'Scenarios 0 & 6', 'var(--y)'],
+          ['MODERATE', 'Bull / Bear', 'Scenarios 1 & 5', 'var(--b)'],
+          ['MILD', 'Mild Bull / Mild Bear', 'Scenarios 2 & 4', 'var(--fg3)'],
+          ['NEUTRAL', 'Base / Base', 'Scenario 3', 'var(--fg4)'],
+        ].map(([conv,tgt,scn,c]) => <div key={conv} style={{background:'var(--bg)',borderRadius:6,padding:'10px 12px',border:'1px solid var(--border)'}}>
+          <div style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:c,marginBottom:2}}>{conv}</div>
+          <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg3)'}}>{tgt}</div>
+          <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:2}}>{scn}</div>
+        </div>)}
+      </div>
+    </div>
+
+    {rows.length > 0 && <div style={{overflowX:'auto',borderRadius:6,border:'1px solid var(--border)'}}>
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:10,fontFamily:'var(--mono)'}}>
+        <thead><tr style={{background:'var(--bg2)'}}>
+          {['Ticker','Name','Side','Operator','Cat','Price','Bull PT','Bear PT','Conv','EV','R/R','Skew','Verdict','Tier'].map(h =>
+            <th key={h} style={{padding:'8px 8px',textAlign:'left',color:'var(--fg3)',fontSize:8,textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid var(--border)',whiteSpace:'nowrap'}}>{h}</th>)}
+        </tr></thead>
+        <tbody>{rows.slice(0,100).map((r,i) => {
+          const isLong = r.side === 'long';
+          const vc = r.engine_verdict?.includes('LONG')?'var(--g)':r.engine_verdict?.includes('SHORT')?'var(--r)':'var(--fg4)';
+          const cc = r.conviction==='STRONG'?'var(--y)':r.conviction==='MODERATE'?'var(--b)':'var(--fg4)';
+          return <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
+            <td style={{padding:'6px 8px',color:isLong?'var(--g)':'var(--r)',fontWeight:700}}>{r.ticker}</td>
+            <td style={{padding:'6px 8px',color:'var(--fg3)'}}>{r.name}</td>
+            <td style={{padding:'6px 8px',color:isLong?'var(--g)':'var(--r)',fontWeight:600}}>{r.side}</td>
+            <td style={{padding:'6px 8px',color:'var(--fg4)'}}>{r.operator}</td>
+            <td style={{padding:'6px 8px',color:'var(--fg4)'}}>{r.category}</td>
+            <td style={{padding:'6px 8px',color:'var(--fg)'}}>{fmt(r.current_price,'price')}</td>
+            <td style={{padding:'6px 8px',color:'var(--g)',fontWeight:600}}>{fmt(r.bull_pt,'price')}</td>
+            <td style={{padding:'6px 8px',color:'var(--r)',fontWeight:600}}>{fmt(r.bear_pt,'price')}</td>
+            <td style={{padding:'6px 8px',color:cc,fontWeight:600}}>{r.conviction}</td>
+            <td style={{padding:'6px 8px',color:'#6366f1'}}>{fmt(r.ev,'price')}</td>
+            <td style={{padding:'6px 8px',color:r.rr_pct>0?'var(--g)':'var(--r)',fontWeight:600}}>{fmt(r.rr_pct,'pct')}</td>
+            <td style={{padding:'6px 8px',color:r.skew>1?'#22d3ee':'#f97316'}}>{r.skew?.toFixed(2)}</td>
+            <td style={{padding:'6px 8px',color:vc,fontWeight:700}}>{r.engine_verdict}</td>
+            <td style={{padding:'6px 8px',color:r.tier==='Core'?'var(--y)':r.tier==='Satellite'?'var(--b)':'var(--fg4)'}}>{r.tier}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+      {rows.length > 100 && <div style={{padding:'8px 16px',fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',textAlign:'center'}}>Showing 100 of {rows.length} — export for full dataset</div>}
     </div>}
-
-    <div style={{fontSize:10,fontWeight:700,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8}}>Format</div>
-    <div style={{display:'flex',gap:6,marginBottom:24}}>
-      <Btn active={format==='csv'} color="var(--g)" onClick={() => setFormat('csv')} style={{flex:1}}>CSV (XA-Coach)</Btn>
-      <Btn active={format==='json'} color="var(--p)" onClick={() => setFormat('json')} style={{flex:1}}>JSON (Full Backup)</Btn>
-    </div>
-    <button onClick={doExport} style={{width:'100%',padding:'14px',fontSize:14,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:'pointer',border:'none',background:'var(--b)',color:'#000',transition:'all .2s'}}>↓ Export</button>
   </div>;
 }
 
-/* ═══════════════ MAIN APP ═══════════════ */
+/* ═══════════════ APP SHELL ═══════════════ */
 function App() {
   const [view, setView] = useState('overview');
-  const [renderKey, setRenderKey] = useState(0);
+  const [masterMacros, setMasterMacros] = useState(() => {
+    const saved = LS.get('xa_master_macros_v4');
+    return saved || MASTER_MACROS_DEFAULT.map(m => ({...m}));
+  });
+  const [opToggles, setOpToggles] = useState(() => LS.get('xa_op_toggles_v4') || {});
+  const [snapData, setSnapData] = useState(() => LS.get('xa_snap_v3'));
 
-  // Build flat global drivers from all operators
-  const defaultDrivers = OPERATORS.flatMap(op => op.drivers.map(d => ({...d, opId: op.id})));
-  const [globalDrivers, setGlobalDrivers] = useState(() => LS.get('xa_drivers_v2') || defaultDrivers);
-  const [snapData, setSnapData] = useState(() => LS.get('xa_snap_v3') || null);
+  useEffect(() => { LS.set('xa_master_macros_v4', masterMacros); }, [masterMacros]);
+  useEffect(() => { LS.set('xa_op_toggles_v4', opToggles); }, [opToggles]);
 
-  useEffect(() => { LS.set('xa_drivers_v2', globalDrivers); }, [globalDrivers]);
+  const operators = OPERATORS;
 
-  /* Called by DataView after snap upload — updates global prices and forces re-render */
-  const onSnapUploaded = useCallback((newSnap) => {
-    if (newSnap?.priceMap) {
-      window.XA_PRICES = newSnap.priceMap;
-      console.log('[XA onSnap] window.XA_PRICES set with', Object.keys(newSnap.priceMap).length, 'prices. NAS.OL=', newSnap.priceMap['NAS.OL']);
-    }
-    setSnapData(newSnap);
-    setRenderKey(k => k + 1);
-  }, []);
-
-  /* Debug: verify NAS.OL on every render */
-  const nasCheck = OPERATORS.find(o => o.id === 'tig')?.stocks.find(s => s.ticker === 'NAS.OL');
-  console.log(`[XA render #${renderKey}] OPERATORS.NAS.OL.currentPrice = ${nasCheck?.currentPrice}`);
-
-  const handleReset = () => {
-    if (confirm('Reset all macro signals to defaults?')) {
-      localStorage.removeItem('xa_drivers_v2');
-      setGlobalDrivers(defaultDrivers);
-    }
-  };
-
-  let content;
-  if (view === 'overview') content = <OverviewView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers} setView={setView}/>;
-  else if (view === 'macro') content = <MacroView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers} setGlobalDrivers={setGlobalDrivers}/>;
-  else if (view === 'operators') content = <OperatorsView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers}/>;
-  else if (view === 'data') content = <DataView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers} snapData={snapData} setSnapData={onSnapUploaded}/>;
-  else if (view === 'export') content = <ExportView key={renderKey} operators={OPERATORS} globalDrivers={globalDrivers}/>;
-
-  return <div style={{display:'flex',flexDirection:'column',height:'100vh'}}>
-    <Header view={view} setView={setView}/>
-    <div style={{flex:1,overflowY:'auto',position:'relative'}}>
-      <div style={{position:'absolute',top:10,right:16,zIndex:10,display:'flex',gap:8,alignItems:'center'}}>
-        {snapData && <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--g)',opacity:.7}}>📊 Snap: {snapData.date}</span>}
-        <button onClick={handleReset} title="Reset signals" style={{background:'transparent',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg4)',cursor:'pointer',padding:'4px 8px',fontSize:9,fontFamily:'var(--mono)'}}>Reset Signals</button>
-      </div>
-      {content}
-    </div>
-    <div style={{borderTop:'1px solid var(--border)',padding:'8px 28px',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--bg1)',flexShrink:0}}>
-      <span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>XA Command Centre v3.0 — GRS · Pan Asian Thematic</span>
-      <span style={{fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)'}}>upside-xa.com</span>
+  return <div style={{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+    <Header view={view} setView={setView} />
+    <div style={{flex:1,overflowY:'auto'}}>
+      {view === 'overview' && <OverviewView operators={operators} masterMacros={masterMacros} setView={setView} />}
+      {view === 'macro' && <MacroView operators={operators} masterMacros={masterMacros} setMasterMacros={setMasterMacros} opToggles={opToggles} setOpToggles={setOpToggles} />}
+      {view === 'operators' && <OperatorsView operators={operators} masterMacros={masterMacros} />}
+      {view === 'data' && <DataView operators={operators} masterMacros={masterMacros} snapData={snapData} setSnapData={setSnapData} />}
+      {view === 'export' && <ExportView operators={operators} masterMacros={masterMacros} opToggles={opToggles} />}
     </div>
   </div>;
 }

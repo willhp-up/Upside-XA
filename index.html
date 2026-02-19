@@ -105,6 +105,39 @@ function getConvictionPT(stock, eng) {
   return { bullPT: stock.prices[bullIdx], bearPT: stock.prices[bearIdx], conviction };
 }
 
+/* ═══════════════ FMP PRICE VERIFICATION ═══════════════ */
+const FMP_TICKER_MAP = {
+  /* Our ticker → FMP ticker where they differ */
+  '0175.HK':'0175.HK','0700.HK':'0700.HK','3690.HK':'3690.HK','3750.HK':'3750.HK',
+  '1211.HK':'1211.HK','1801.HK':'1801.HK','2269.HK':'2269.HK','2382.HK':'2382.HK','9988.HK':'9988.HK',
+  'SAAB-B.ST':'SAAB-B.ST',
+};
+function fmpTicker(t){ return FMP_TICKER_MAP[t] || t; }
+
+async function fetchFMPQuotes(tickers, apiKey) {
+  const mapped = tickers.map(t => ({orig:t, fmp:fmpTicker(t)}));
+  const results = {};
+  const BATCH = 20;
+  for (let i = 0; i < mapped.length; i += BATCH) {
+    const chunk = mapped.slice(i, i + BATCH);
+    const symbols = chunk.map(c => c.fmp).join(',');
+    try {
+      const resp = await fetch(`https://financialmodelingprep.com/api/v3/quote/${encodeURIComponent(symbols)}?apikey=${apiKey}`);
+      if (!resp.ok) { console.warn(`FMP batch ${i}/${mapped.length} HTTP ${resp.status}`); continue; }
+      const data = await resp.json();
+      if (data?.['Error Message']) { return { error: data['Error Message'] }; }
+      if (Array.isArray(data)) {
+        data.forEach(q => {
+          const match = chunk.find(c => c.fmp === q.symbol);
+          if (match) results[match.orig] = { price: q.price, name: q.name, changePct: q.changesPercentage, exchange: q.exchange };
+        });
+      }
+    } catch(e) { console.warn('FMP fetch error:', e); }
+    if (i + BATCH < mapped.length) await new Promise(r => setTimeout(r, 300)); /* rate limit courtesy */
+  }
+  return { quotes: results };
+}
+
 const fmt=(v,t)=>{if(v===null||v===undefined||isNaN(v))return'—';if(t==='pct')return`${v>=0?'+':''}${v.toFixed(1)}%`;if(t==='ratio')return`${v.toFixed(1)}x`;if(t==='price'){if(Math.abs(v)>=10000)return v.toLocaleString('en',{maximumFractionDigits:0});if(Math.abs(v)>=100)return v.toFixed(1);return v.toFixed(2)}return`${v.toFixed(1)}`};
 
 /* ═══════════════ MASTER MACROS ═══════════════ */
@@ -959,6 +992,163 @@ function OperatorsView({operators, masterMacros}) {
   </div>;
 }
 
+/* ═══════════════ FMP VERIFY PANEL ═══════════════ */
+function FMPVerifyPanel({operators}) {
+  const [apiKey, setApiKey] = useState(() => {
+    try { return localStorage.getItem('xa_fmp_key') || ''; } catch { return ''; }
+  });
+  const [showKey, setShowKey] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState(null);
+  const [threshold] = useState(2); /* >2% deviation flagged */
+  const [expanded, setExpanded] = useState(false);
+
+  const saveKey = (k) => {
+    setApiKey(k);
+    try { localStorage.setItem('xa_fmp_key', k); } catch {}
+  };
+
+  const allStocks = useMemo(() => {
+    const out = [];
+    operators.forEach(op => {
+      op.stocks.forEach(s => {
+        if (!out.find(x => x.ticker === s.ticker)) {
+          out.push({ ticker: s.ticker, name: s.name, xaPrice: s.currentPrice, operators: [op.name] });
+        } else {
+          out.find(x => x.ticker === s.ticker).operators.push(op.name);
+        }
+      });
+    });
+    return out;
+  }, [operators]);
+
+  const verify = async () => {
+    if (!apiKey) { setError('Enter your FMP API key first'); return; }
+    setLoading(true); setError(null); setResults(null);
+    setProgress(`Fetching ${allStocks.length} tickers from FMP...`);
+
+    const tickers = allStocks.map(s => s.ticker);
+    const res = await fetchFMPQuotes(tickers, apiKey);
+
+    if (res.error) { setError(res.error); setLoading(false); setProgress(''); return; }
+
+    const quotes = res.quotes || {};
+    const matched = [];
+    const missing = [];
+
+    allStocks.forEach(s => {
+      const fmp = quotes[s.ticker];
+      if (fmp && fmp.price > 0) {
+        const dev = s.xaPrice > 0 ? ((fmp.price - s.xaPrice) / s.xaPrice) * 100 : 0;
+        matched.push({ ...s, fmpPrice: fmp.price, fmpName: fmp.name, deviation: dev, flagged: Math.abs(dev) > threshold });
+      } else {
+        missing.push(s);
+      }
+    });
+
+    matched.sort((a,b) => Math.abs(b.deviation) - Math.abs(a.deviation));
+    const flagged = matched.filter(m => m.flagged);
+
+    setResults({ matched, missing, flagged, total: allStocks.length, fetchedAt: new Date().toLocaleTimeString() });
+    setProgress('');
+    setLoading(false);
+  };
+
+  const flagCount = results?.flagged?.length || 0;
+  const matchCount = results?.matched?.length || 0;
+  const missCount = results?.missing?.length || 0;
+
+  return <div style={{background:'var(--bg1)',border:'1px solid rgba(64,196,255,.2)',borderRadius:8,padding:16,marginBottom:24}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10,cursor:'pointer'}} onClick={() => setExpanded(!expanded)}>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <span style={{fontSize:14}}>🔍</span>
+        <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'var(--b)'}}>FMP Price Verification</span>
+        {results && <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>
+          — {matchCount} matched · {flagCount > 0 ? <span style={{color:'var(--y)'}}>{flagCount} flagged</span> : <span style={{color:'var(--g)'}}>all clear</span>} · {missCount} missing · {results.fetchedAt}
+        </span>}
+      </div>
+      <span style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{expanded ? '▼' : '▶'}</span>
+    </div>
+
+    {expanded && <div>
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12}}>
+        <div style={{position:'relative',flex:1,maxWidth:350}}>
+          <input value={showKey ? apiKey : apiKey ? '•'.repeat(Math.min(apiKey.length,24)) : ''} 
+            onChange={e => saveKey(e.target.value)}
+            onFocus={() => setShowKey(true)} onBlur={() => setShowKey(false)}
+            placeholder="FMP API Key" 
+            style={{width:'100%',padding:'8px 12px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)'}} />
+        </div>
+        <button onClick={verify} disabled={loading}
+          style={{padding:'8px 16px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:loading?'wait':'pointer',
+            border:'1px solid rgba(64,196,255,.4)',background:loading?'var(--bg2)':'rgba(64,196,255,.08)',color:'var(--b)',transition:'all .15s'}}>
+          {loading ? '⏳ Verifying...' : '🔍 Verify Prices'}
+        </button>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>
+          {allStocks.length} unique tickers · >{threshold}% = flagged
+        </span>
+      </div>
+      {progress && <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--b)',marginBottom:8}}>{progress}</div>}
+      {error && <div style={{padding:'8px 12px',background:'rgba(255,61,113,.08)',border:'1px solid rgba(255,61,113,.2)',borderRadius:4,color:'var(--r)',fontSize:10,fontFamily:'var(--mono)',marginBottom:8}}>{error}</div>}
+
+      {results && <div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:14}}>
+          {[['Matched',matchCount,'var(--g)'],['Flagged (>'+threshold+'%)',flagCount,flagCount>0?'var(--y)':'var(--g)'],['Missing',missCount,missCount>0?'var(--r)':'var(--fg4)'],['Verified',results.fetchedAt,'var(--b)']].map(([l,v,c]) =>
+            <div key={l} style={{background:'var(--bg2)',borderRadius:6,padding:'10px 12px'}}>
+              <div style={{fontSize:8,color:'var(--fg4)',fontFamily:'var(--mono)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:3}}>{l}</div>
+              <div style={{fontSize:14,fontFamily:'var(--mono)',fontWeight:700,color:c}}>{v}</div>
+            </div>)}
+        </div>
+
+        {flagCount > 0 && <div style={{marginBottom:14}}>
+          <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--y)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>⚠ Flagged Deviations</div>
+          <div style={{overflowX:'auto',borderRadius:4,border:'1px solid rgba(255,193,7,.15)'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:10,fontFamily:'var(--mono)'}}>
+              <thead><tr style={{background:'rgba(255,193,7,.06)'}}>
+                {['Ticker','Name','XA Price','FMP Price','Deviation','Operators'].map(h =>
+                  <th key={h} style={{padding:'6px 8px',textAlign:'left',color:'var(--fg3)',fontSize:8,textTransform:'uppercase',borderBottom:'1px solid var(--border)'}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{results.flagged.map(r => {
+                const devColor = Math.abs(r.deviation) > 10 ? 'var(--r)' : 'var(--y)';
+                return <tr key={r.ticker} style={{borderBottom:'1px solid var(--border)'}}>
+                  <td style={{padding:'5px 8px',color:'var(--fg)',fontWeight:700}}>{r.ticker}</td>
+                  <td style={{padding:'5px 8px',color:'var(--fg3)'}}>{r.name}</td>
+                  <td style={{padding:'5px 8px',color:'var(--fg)'}}>{fmt(r.xaPrice,'price')}</td>
+                  <td style={{padding:'5px 8px',color:'var(--b)'}}>{fmt(r.fmpPrice,'price')}</td>
+                  <td style={{padding:'5px 8px',color:devColor,fontWeight:700}}>{r.deviation>0?'+':''}{r.deviation.toFixed(1)}%</td>
+                  <td style={{padding:'5px 8px',color:'var(--fg4)'}}>{r.operators.join(', ')}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+        </div>}
+
+        {results.matched.filter(m => !m.flagged).length > 0 && <div style={{marginBottom:14}}>
+          <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--g)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>✓ Aligned ({results.matched.filter(m=>!m.flagged).length})</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+            {results.matched.filter(m=>!m.flagged).map(r =>
+              <span key={r.ticker} style={{fontSize:9,fontFamily:'var(--mono)',padding:'2px 6px',borderRadius:3,background:'rgba(0,230,118,.06)',color:'var(--g)',border:'1px solid rgba(0,230,118,.12)'}} title={`XA: ${r.xaPrice} | FMP: ${r.fmpPrice} (${r.deviation>0?'+':''}${r.deviation.toFixed(1)}%)`}>{r.ticker}</span>)}
+          </div>
+        </div>}
+
+        {missCount > 0 && <div>
+          <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--r)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>✗ Not Found on FMP ({missCount})</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+            {results.missing.map(r =>
+              <span key={r.ticker} style={{fontSize:9,fontFamily:'var(--mono)',padding:'2px 6px',borderRadius:3,background:'rgba(255,61,113,.06)',color:'var(--r)',border:'1px solid rgba(255,61,113,.12)'}} title={r.name}>{r.ticker}</span>)}
+          </div>
+        </div>}
+      </div>}
+
+      <div style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',marginTop:10}}>
+        Key stored locally · never committed to repo · FMP free tier: 250 calls/day
+      </div>
+    </div>}
+  </div>;
+}
+
 /* ═══════════════ DATA VIEW ═══════════════ */
 function DataView({operators, masterMacros, snapData, setSnapData}) {
   const [dragOver, setDragOver] = useState(false);
@@ -1188,6 +1378,9 @@ function DataView({operators, masterMacros, snapData, setSnapData}) {
         ↓ Re-download api.json
       </button>
     </div>}
+
+    {/* ═══ FMP PRICE VERIFICATION ═══ */}
+    <FMPVerifyPanel operators={operators} />
 
     {snapData?.unmatched?.length > 0 && <div style={{background:'var(--bg1)',border:'1px solid rgba(255,61,113,.2)',borderRadius:8,padding:16,marginBottom:24}}>
       <span style={{fontSize:11,fontFamily:'var(--mono)',fontWeight:700,color:'var(--r)'}}>⚠ Unmatched ({snapData.unmatched.length})</span>

@@ -94,15 +94,31 @@ function runEngine(stock, macroMap, masterMacros){
   return{pr,ev,rr,skew,vd,tier,c};
 }
 
-/* Conviction → Price Target mapping */
+/* Conviction → Price Target mapping
+   Walks DOWN from conviction level to find valid targets:
+   Bull PT must be > current price, Bear PT must be < current price.
+   If no valid target found at any level, returns null (don't publish). */
 function getConvictionPT(stock, eng) {
   if (!eng || !stock.prices || stock.prices.length !== 7) return { bullPT: null, bearPT: null, conviction: 'NEUTRAL' };
   const vd = eng.vd;
-  let bullIdx = 3, bearIdx = 3, conviction = 'NEUTRAL';
-  if (vd === 'STRONG LONG' || vd === 'STRONG SHORT') { bullIdx = 6; bearIdx = 0; conviction = 'STRONG'; }
-  else if (vd === 'LONG' || vd === 'SHORT') { bullIdx = 5; bearIdx = 1; conviction = 'MODERATE'; }
-  else if (Math.abs(eng.rr) > 3) { bullIdx = 4; bearIdx = 2; conviction = 'MILD'; }
-  return { bullPT: stock.prices[bullIdx], bearPT: stock.prices[bearIdx], conviction };
+  const cp = stock.currentPrice || stock.prices[3];
+  let conviction = 'NEUTRAL';
+  if (vd === 'STRONG LONG' || vd === 'STRONG SHORT') conviction = 'STRONG';
+  else if (vd === 'LONG' || vd === 'SHORT') conviction = 'MODERATE';
+  else if (Math.abs(eng.rr) > 3) conviction = 'MILD';
+
+  /* Bull candidates in priority order per conviction */
+  const bullLadder = { STRONG:[6,5,4], MODERATE:[5,4,6], MILD:[4,5,6], NEUTRAL:[4,5,6] };
+  const bearLadder = { STRONG:[0,1,2], MODERATE:[1,2,0], MILD:[2,1,0], NEUTRAL:[2,1,0] };
+
+  let bullPT = null, bearPT = null;
+  for (const idx of bullLadder[conviction]) {
+    if (stock.prices[idx] > cp) { bullPT = stock.prices[idx]; break; }
+  }
+  for (const idx of bearLadder[conviction]) {
+    if (stock.prices[idx] < cp) { bearPT = stock.prices[idx]; break; }
+  }
+  return { bullPT, bearPT, conviction };
 }
 
 /* ═══════════════ FMP PRICE VERIFICATION ═══════════════ */
@@ -503,6 +519,7 @@ function Header({view, setView}) {
     {id:'overview', label:'Overview', icon:'◉'},
     {id:'macro', label:'Macro', icon:'⚡'},
     {id:'operators', label:'Operators', icon:'◆'},
+    {id:'rebalance', label:'Rebalance', icon:'🔄'},
     {id:'data', label:'Data', icon:'⬆'},
     {id:'export', label:'Export', icon:'↓'},
   ];
@@ -1450,6 +1467,429 @@ function DataView({operators, masterMacros, snapData, setSnapData}) {
   </div>;
 }
 
+/* ═══════════════ REBALANCE VIEW ═══════════════ */
+const OPERATOR_SECTORS = {
+  tig:['airline','hotel','travel','leisure','booking','airport','hospitality','tourism','cruise'],
+  rone:['defence','defense','aerospace','military','security','arms','munition'],
+  tanto:['oil','gas','energy','petroleum','refin','lng','pipeline','drilling'],
+  jack:['semiconductor','chip','gpu','foundry','compute','processor','wafer','lithography','memory'],
+  boon:['payment','fintech','bank','financial','crypto','digital payment','lending','exchange'],
+  oz:['pharma','biotech','health','medical','drug','therapeutic','surgical','diagnostic','genomic'],
+  ipm:['china','chinese','hong kong','shenzhen','shanghai'],
+  miu:['japan','japanese','tokyo','nikkei'],
+  ctc:['taiwan','taiwanese','taiex'],
+  wzh:['korea','korean','seoul','kospi','kosdaq'],
+  frk:['singapore','southeast asia','asean','vietnam','indonesia','thailand','malaysia'],
+};
+
+function buildRebalancePrompt(op, masterMacros, universe, opToggles) {
+  const activeMap = op.macroMap.filter(m => opToggles[`${op.id}__${m.macroId}`] !== false);
+  const macroLines = activeMap.map(m => {
+    const mm = masterMacros.find(g => g.id === m.macroId);
+    const sig = mm?.signal || 0;
+    const label = mm?.label || m.macroId;
+    const stance = sig > 0.3 ? 'BULLISH' : sig < -0.3 ? 'BEARISH' : 'NEUTRAL';
+    return `  - ${label} (weight: ${m.weight}%, signal: ${sig > 0 ? '+' : ''}${sig.toFixed(2)}, stance: ${stance})`;
+  }).join('\n');
+
+  const macroIds = activeMap.map(m => m.macroId);
+
+  const holdingLines = op.stocks.map(s => {
+    const eng = runEngine(s, op.macroMap, masterMacros);
+    const minP = Math.min(...s.prices), maxP = Math.max(...s.prices);
+    const stale = s.currentPrice < minP || s.currentPrice > maxP;
+    const sensStr = Object.entries(s.sens).map(([k,v]) => `${k}:${v}`).join(', ');
+    return `  ${s.ticker} | ${s.name} | ${s.verdict.toUpperCase()} | Price: ${s.currentPrice} | Range: [${minP}–${maxP}] | EV: ${eng?.ev?.toFixed(1)} | R/R: ${eng?.rr?.toFixed(1)}% | Skew: ${eng?.skew?.toFixed(2)} | ${stale ? '⚠ STALE (price outside scenario range)' : 'OK'} | Sens: {${sensStr}}`;
+  }).join('\n');
+
+  let universeLines = '';
+  if (universe && universe.length > 0) {
+    const keywords = OPERATOR_SECTORS[op.id] || [];
+    const relevant = universe.filter(r => {
+      const hay = `${r.name} ${r.sector} ${r.country}`.toLowerCase();
+      return keywords.some(kw => hay.includes(kw));
+    }).slice(0, 40);
+    if (relevant.length > 0) {
+      universeLines = relevant.map(r => `  ${r.bbg_ticker} | ${r.name} | Price: ${r.price} | MktCap: ${r.mkt_cap_usd_m}M | Sector: ${r.sector} | Country: ${r.country}`).join('\n');
+    }
+  }
+
+  return `You are ${op.fullName}, a specialist equity analyst at XA Command Centre.
+
+YOUR MANDATE: ${op.desc}
+CATEGORY: ${op.category} | TEAM: ${op.team}
+
+MACRO ENVIRONMENT (your assigned drivers with current signals):
+${macroLines}
+
+CURRENT PORTFOLIO (${op.stocks.length} names):
+${holdingLines}
+
+${universeLines ? `CANDIDATE UNIVERSE (from Bloomberg/FMP screening):
+${universeLines}` : 'No candidate universe available — propose changes using your existing holdings and market knowledge.'}
+
+TASK: Rebalance your portfolio given the current macro environment and stock-level conditions.
+
+Evaluate each holding:
+- Is the thesis still intact given macro conditions?
+- Has the price moved beyond scenario ranges (STALE)?
+- Is R/R still attractive or has it been captured?
+
+You may:
+1. KEEP names that still fit (update scenario prices ONLY if stale or materially changed)
+2. REMOVE names where thesis is broken or R/R exhausted
+3. ADD new names from the universe or your knowledge that better express your thesis
+
+RULES:
+- Output 10-15 stocks total (mix of longs and shorts)
+- Each stock needs 7 scenario prices: [deepBear, bear, mildBear, base, mildBull, bull, deepBull]
+- Base price should approximate fair value; scenarios should bracket current price
+- For LONG stocks: current price should be below base (upside exists)
+- For SHORT stocks: current price should be above base (downside exists)
+- Sensitivity values range -1.0 to 1.0 for ONLY these macro IDs: ${JSON.stringify(macroIds)}
+- For KEEP stocks with no price changes needed, use their existing prices exactly
+
+Respond with ONLY valid JSON, no markdown, no backticks, no preamble:
+{
+  "reasoning": "2-3 sentence summary of your rebalance rationale",
+  "stocks": [
+    {
+      "action": "keep" | "add" | "remove",
+      "ticker": "EXACT_TICKER",
+      "name": "Company Name",
+      "verdict": "long" | "short",
+      "currentPrice": 123.45,
+      "prices": [p0, p1, p2, p3, p4, p5, p6],
+      "sens": {"macroId": 0.5, ...},
+      "reason": "brief reason for this action"
+    }
+  ]
+}`;
+}
+
+function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyRebalance}) {
+  const [anthropicKey, setAnthropicKey] = useState(() => {
+    try { return localStorage.getItem('xa_anthropic_key') || ''; } catch { return ''; }
+  });
+  const [showKey, setShowKey] = useState(false);
+  const [selOp, setSelOp] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [error, setError] = useState(null);
+  const [proposal, setProposal] = useState(null); /* {opId, reasoning, stocks:[{...stock, action, reason, accepted}]} */
+  const [allResults, setAllResults] = useState([]); /* for rebalance-all mode */
+  const [mode, setMode] = useState('single'); /* 'single' or 'all' */
+
+  const saveKey = (k) => { setAnthropicKey(k); try { localStorage.setItem('xa_anthropic_key', k); } catch {} };
+  const universe = snapData?.universe || [];
+
+  const callClaude = async (prompt) => {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4096,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      throw new Error(`API ${resp.status}: ${errBody.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const text = data.content?.map(b => b.text || '').join('') || '';
+    return text;
+  };
+
+  const parseResponse = (text, opId) => {
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (!parsed.stocks || !Array.isArray(parsed.stocks)) throw new Error('No stocks array in response');
+    return {
+      opId,
+      reasoning: parsed.reasoning || '',
+      stocks: parsed.stocks.map(s => ({
+        ...s,
+        accepted: s.action !== 'remove', /* default: accept keeps/adds, reject removes */
+      })),
+    };
+  };
+
+  const rebalanceOp = async (op) => {
+    const prompt = buildRebalancePrompt(op, masterMacros, universe, opToggles);
+    setProgress(`${op.icon} ${op.name}: calling Claude...`);
+    const text = await callClaude(prompt);
+    setProgress(`${op.icon} ${op.name}: parsing response...`);
+    return parseResponse(text, op.id);
+  };
+
+  const runSingle = async () => {
+    if (!anthropicKey) { setError('Enter your Anthropic API key'); return; }
+    const op = operators.find(o => o.id === selOp);
+    if (!op) { setError('Select an operator'); return; }
+    setLoading(true); setError(null); setProposal(null);
+    try {
+      const result = await rebalanceOp(op);
+      setProposal(result);
+      setProgress('');
+    } catch (e) { setError(`Rebalance failed: ${e.message}`); setProgress(''); }
+    setLoading(false);
+  };
+
+  const runAll = async () => {
+    if (!anthropicKey) { setError('Enter your Anthropic API key'); return; }
+    setLoading(true); setError(null); setAllResults([]); setProposal(null);
+    const results = [];
+    for (const op of operators) {
+      try {
+        const result = await rebalanceOp(op);
+        results.push(result);
+        setAllResults([...results]);
+      } catch (e) {
+        results.push({ opId: op.id, reasoning: `ERROR: ${e.message}`, stocks: [], error: true });
+        setAllResults([...results]);
+      }
+      if (op !== operators[operators.length - 1]) await new Promise(r => setTimeout(r, 1000));
+    }
+    setProgress(`Done — ${results.filter(r => !r.error).length}/${operators.length} operators rebalanced`);
+    setLoading(false);
+  };
+
+  const toggleAccept = (stockIdx) => {
+    if (!proposal) return;
+    setProposal(p => ({
+      ...p,
+      stocks: p.stocks.map((s, i) => i === stockIdx ? { ...s, accepted: !s.accepted } : s),
+    }));
+  };
+
+  const toggleAllAccept = (opId, stockIdx) => {
+    setAllResults(prev => prev.map(r => r.opId === opId ? {
+      ...r, stocks: r.stocks.map((s, i) => i === stockIdx ? { ...s, accepted: !s.accepted } : s)
+    } : r));
+  };
+
+  const applyProposal = (prop) => {
+    const accepted = prop.stocks.filter(s => s.accepted);
+    const kept = accepted.filter(s => s.action === 'keep' || s.action === 'add');
+    if (kept.length === 0) { setError('No stocks to apply — select at least one keep/add'); return; }
+
+    const newStocks = kept.map(s => ({
+      ticker: s.ticker,
+      name: s.name,
+      verdict: s.verdict,
+      currentPrice: s.currentPrice,
+      prices: s.prices,
+      sens: s.sens,
+    }));
+
+    onApplyRebalance(prop.opId, newStocks);
+    setProposal(null);
+    return true;
+  };
+
+  const applyAll = () => {
+    let applied = 0;
+    allResults.forEach(r => {
+      if (r.error) return;
+      const accepted = r.stocks.filter(s => s.accepted);
+      const kept = accepted.filter(s => s.action === 'keep' || s.action === 'add');
+      if (kept.length > 0) {
+        const newStocks = kept.map(s => ({
+          ticker: s.ticker, name: s.name, verdict: s.verdict,
+          currentPrice: s.currentPrice, prices: s.prices, sens: s.sens,
+        }));
+        onApplyRebalance(r.opId, newStocks);
+        applied++;
+      }
+    });
+    setAllResults([]);
+    setProgress(`Applied ${applied} operator rebalances — reloading...`);
+    setTimeout(() => window.location.reload(), 500);
+  };
+
+  const categories = ['GRS', 'Asian GRS'];
+
+  const renderProposalTable = (prop, toggleFn) => {
+    const op = operators.find(o => o.id === prop.opId);
+    const adds = prop.stocks.filter(s => s.action === 'add');
+    const removes = prop.stocks.filter(s => s.action === 'remove');
+    const keeps = prop.stocks.filter(s => s.action === 'keep');
+    const accepted = prop.stocks.filter(s => s.accepted && s.action !== 'remove').length;
+
+    return <div style={{background:'var(--bg2)',borderRadius:8,border:`1px solid ${op?.color || 'var(--border)'}20`,overflow:'hidden',marginBottom:16}}>
+      <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:20}}>{op?.icon}</span>
+          <div>
+            <span style={{fontSize:15,fontFamily:'var(--mono)',fontWeight:700,color:op?.color}}>{op?.name}</span>
+            <span style={{fontSize:11,color:'var(--fg4)',marginLeft:8}}>{op?.team}</span>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:6}}>
+          <Badge color="var(--g)" small>{adds.length} ADD</Badge>
+          <Badge color="var(--r)" small>{removes.length} REMOVE</Badge>
+          <Badge color="var(--fg3)" small>{keeps.length} KEEP</Badge>
+          <Badge color="var(--b)" small>{accepted} accepted</Badge>
+        </div>
+      </div>
+      {prop.reasoning && <div style={{padding:'10px 18px',borderBottom:'1px solid var(--border)',fontSize:11,color:'var(--fg3)',fontStyle:'italic',lineHeight:1.5}}>
+        {prop.reasoning}
+      </div>}
+      <div style={{overflowX:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:10,fontFamily:'var(--mono)'}}>
+          <thead><tr style={{background:'var(--bg1)'}}>
+            {['','Action','Ticker','Name','Side','Price','Scenario Range','Sens','Reason'].map(h =>
+              <th key={h} style={{padding:'7px 8px',textAlign:'left',color:'var(--fg3)',fontSize:8,textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid var(--border)',whiteSpace:'nowrap'}}>{h}</th>)}
+          </tr></thead>
+          <tbody>{prop.stocks.map((s, si) => {
+            const ac = s.action === 'add' ? 'var(--g)' : s.action === 'remove' ? 'var(--r)' : 'var(--fg3)';
+            const isLong = s.verdict === 'long';
+            return <tr key={si} style={{borderBottom:'1px solid var(--border)',opacity:s.accepted?1:0.35,background:s.action==='add'?'rgba(0,230,118,.02)':s.action==='remove'?'rgba(255,61,113,.02)':'transparent'}}>
+              <td style={{padding:'6px 8px',textAlign:'center'}}>
+                <span style={{cursor:'pointer',fontSize:14}} onClick={() => toggleFn(si)}>{s.accepted ? '✅' : '⬜'}</span>
+              </td>
+              <td style={{padding:'6px 8px'}}><Badge color={ac} small>{s.action.toUpperCase()}</Badge></td>
+              <td style={{padding:'6px 8px',color:isLong?'var(--g)':'var(--r)',fontWeight:700}}>{s.ticker}</td>
+              <td style={{padding:'6px 8px',color:'var(--fg3)'}}>{s.name}</td>
+              <td style={{padding:'6px 8px',color:isLong?'var(--g)':'var(--r)'}}>{s.verdict}</td>
+              <td style={{padding:'6px 8px',color:'var(--fg)'}}>{fmt(s.currentPrice,'price')}</td>
+              <td style={{padding:'6px 8px',color:'var(--fg4)',fontSize:9}}>
+                {s.prices ? `${fmt(s.prices[0],'price')} → ${fmt(s.prices[3],'price')} → ${fmt(s.prices[6],'price')}` : '—'}
+              </td>
+              <td style={{padding:'6px 8px',color:'var(--fg4)',fontSize:8,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                {s.sens ? Object.entries(s.sens).map(([k,v]) => `${k}:${v>0?'+':''}${v}`).join(' ') : '—'}
+              </td>
+              <td style={{padding:'6px 8px',color:'var(--fg4)',fontSize:9,maxWidth:180}}>{s.reason || '—'}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+    </div>;
+  };
+
+  return <div style={{padding:32,maxWidth:1300,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:24}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--p)',fontWeight:400,marginBottom:6}}>AI Rebalance</h1>
+      <p style={{fontSize:12,color:'var(--fg4)'}}>Each operator calls Claude to evaluate its holdings against current macro conditions and propose changes for your approval.</p>
+    </div>
+
+    {/* API Key */}
+    <div style={{background:'var(--bg1)',borderRadius:8,border:'1px solid var(--border)',padding:16,marginBottom:20}}>
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8}}>
+        <span style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:'var(--p)'}}>🔑 Anthropic API Key</span>
+        <span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)'}}>Stored in localStorage only — never in source</span>
+      </div>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <input value={showKey ? anthropicKey : anthropicKey ? '•'.repeat(Math.min(anthropicKey.length, 20)) : ''}
+          onChange={e => saveKey(e.target.value)}
+          onFocus={() => setShowKey(true)} onBlur={() => setShowKey(false)}
+          placeholder="sk-ant-..." style={{flex:1,maxWidth:400,padding:'8px 12px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)'}} />
+        {anthropicKey && <Badge color="var(--g)" small>✓ Saved</Badge>}
+      </div>
+    </div>
+
+    {/* Mode + Operator Selection */}
+    <div style={{display:'flex',gap:6,marginBottom:16,alignItems:'center',flexWrap:'wrap'}}>
+      <Btn active={mode==='single'} color="var(--p)" onClick={() => {setMode('single');setAllResults([]);}}>Single Operator</Btn>
+      <Btn active={mode==='all'} color="var(--y)" onClick={() => {setMode('all');setProposal(null);}}>Rebalance All</Btn>
+      {universe.length > 0 && <Badge color="var(--b)" small>📊 {universe.length} universe candidates loaded</Badge>}
+      {universe.length === 0 && <Badge color="var(--fg4)" small>No Bloomberg universe — AI will use market knowledge</Badge>}
+    </div>
+
+    {mode === 'single' && <div>
+      <div style={{display:'flex',gap:4,marginBottom:16,flexWrap:'wrap'}}>
+        {categories.map(cat => {
+          const catOps = operators.filter(o => o.category === cat);
+          return <React.Fragment key={cat}>
+            <span style={{fontSize:8,fontFamily:'var(--mono)',color:'var(--fg4)',alignSelf:'center',marginRight:2,marginLeft:8}}>{cat}:</span>
+            {catOps.map(op => <Btn key={op.id} active={selOp===op.id} color={op.color} onClick={() => {setSelOp(op.id);setProposal(null);setError(null);}}>
+              {op.icon} {op.name}
+            </Btn>)}
+          </React.Fragment>;
+        })}
+      </div>
+
+      {selOp && (() => {
+        const op = operators.find(o => o.id === selOp);
+        if (!op) return null;
+        const staleCount = op.stocks.filter(s => {
+          const minP = Math.min(...s.prices), maxP = Math.max(...s.prices);
+          return s.currentPrice < minP || s.currentPrice > maxP;
+        }).length;
+        return <div style={{background:'var(--bg2)',borderRadius:8,padding:16,marginBottom:16,borderLeft:`3px solid ${op.color}`}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <span style={{fontSize:15,fontFamily:'var(--mono)',fontWeight:700,color:op.color}}>{op.icon} {op.name}</span>
+              <span style={{fontSize:11,color:'var(--fg4)',marginLeft:10}}>{op.stocks.length} stocks · {staleCount > 0 ? <span style={{color:'var(--y)'}}>{staleCount} stale</span> : <span style={{color:'var(--g)'}}>all current</span>}</span>
+            </div>
+            <button onClick={runSingle} disabled={loading} style={{padding:'10px 20px',fontSize:12,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:loading?'wait':'pointer',
+              border:'none',background:loading?'var(--bg3)':'var(--p)',color:loading?'var(--fg3)':'#000',transition:'all .15s'}}>
+              {loading ? '⏳ Running...' : `🔄 Rebalance ${op.name}`}
+            </button>
+          </div>
+        </div>;
+      })()}
+    </div>}
+
+    {mode === 'all' && <div style={{marginBottom:16}}>
+      <button onClick={runAll} disabled={loading} style={{padding:'12px 24px',fontSize:13,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:loading?'wait':'pointer',
+        border:'none',background:loading?'var(--bg3)':'var(--y)',color:'#000',transition:'all .15s'}}>
+        {loading ? '⏳ Running...' : `🔄 Rebalance All ${operators.length} Operators`}
+      </button>
+      <span style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',marginLeft:12}}>Sequential · ~15s per operator · review all before applying</span>
+    </div>}
+
+    {progress && <div style={{padding:'8px 14px',background:'rgba(179,136,255,.06)',borderRadius:6,marginBottom:12,fontSize:11,fontFamily:'var(--mono)',color:'var(--p)'}}>{progress}</div>}
+    {error && <div style={{padding:'10px 14px',background:'rgba(255,61,113,.06)',border:'1px solid rgba(255,61,113,.2)',borderRadius:6,color:'var(--r)',fontSize:11,fontFamily:'var(--mono)',marginBottom:12}}>{error}</div>}
+
+    {/* Single proposal review */}
+    {proposal && <div>
+      <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:10}}>Proposed Changes — Review & Approve</div>
+      {renderProposalTable(proposal, toggleAccept)}
+      <div style={{display:'flex',gap:8}}>
+        <button onClick={() => { applyProposal(proposal); setTimeout(() => window.location.reload(), 400); }}
+          style={{padding:'10px 22px',fontSize:12,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:'pointer',border:'none',background:'var(--g)',color:'#000'}}>
+          ✓ Apply Accepted ({proposal.stocks.filter(s => s.accepted && s.action !== 'remove').length} stocks)
+        </button>
+        <button onClick={() => setProposal(null)}
+          style={{padding:'10px 22px',fontSize:12,fontFamily:'var(--mono)',fontWeight:600,borderRadius:6,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)'}}>
+          Discard
+        </button>
+      </div>
+    </div>}
+
+    {/* All results review */}
+    {allResults.length > 0 && <div>
+      <div style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:10}}>
+        Portfolio Rebalance — {allResults.filter(r => !r.error).length}/{operators.length} Complete
+      </div>
+      {allResults.map(r => {
+        if (r.error) return <div key={r.opId} style={{padding:'10px 14px',background:'rgba(255,61,113,.04)',borderRadius:6,marginBottom:8,fontSize:10,fontFamily:'var(--mono)',color:'var(--r)'}}>
+          {operators.find(o=>o.id===r.opId)?.icon} {operators.find(o=>o.id===r.opId)?.name}: {r.reasoning}
+        </div>;
+        return <div key={r.opId}>{renderProposalTable(r, (si) => toggleAllAccept(r.opId, si))}</div>;
+      })}
+      {!loading && allResults.some(r => !r.error) && <div style={{display:'flex',gap:8,marginTop:8}}>
+        <button onClick={applyAll}
+          style={{padding:'12px 24px',fontSize:13,fontFamily:'var(--mono)',fontWeight:700,borderRadius:6,cursor:'pointer',border:'none',background:'var(--g)',color:'#000'}}>
+          ✓ Apply All Accepted Changes
+        </button>
+        <button onClick={() => setAllResults([])}
+          style={{padding:'12px 24px',fontSize:12,fontFamily:'var(--mono)',fontWeight:600,borderRadius:6,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)'}}>
+          Discard All
+        </button>
+      </div>}
+    </div>}
+  </div>;
+}
+
 /* ═══════════════ EXPORT VIEW ═══════════════ */
 function ExportView({operators, masterMacros, opToggles}) {
   const [scope, setScope] = useState('all');
@@ -1607,10 +2047,41 @@ function App() {
   const [opToggles, setOpToggles] = useState(() => LS.get('xa_op_toggles_v4') || {});
   const [snapData, setSnapData] = useState(() => LS.get('xa_snap_v3'));
 
+  /* Mutable operators: load overrides from localStorage on boot */
+  const [operators, setOperators] = useState(() => {
+    const overrides = LS.get('xa_op_overrides_v4');
+    if (overrides && typeof overrides === 'object') {
+      return OPERATORS.map(op => {
+        if (overrides[op.id]) {
+          return { ...op, stocks: overrides[op.id] };
+        }
+        return op;
+      });
+    }
+    return OPERATORS;
+  });
+
   useEffect(() => { LS.set('xa_master_macros_v4', masterMacros); }, [masterMacros]);
   useEffect(() => { LS.set('xa_op_toggles_v4', opToggles); }, [opToggles]);
 
-  const operators = OPERATORS;
+  const onApplyRebalance = useCallback((opId, newStocks) => {
+    /* Update live state */
+    setOperators(prev => {
+      const next = prev.map(op => op.id === opId ? { ...op, stocks: newStocks } : op);
+      /* Also update the global OPERATORS so engines use new data */
+      const idx = OPERATORS.findIndex(o => o.id === opId);
+      if (idx >= 0) OPERATORS[idx].stocks = newStocks;
+      /* Persist overrides */
+      const overrides = LS.get('xa_op_overrides_v4') || {};
+      overrides[opId] = newStocks;
+      LS.set('xa_op_overrides_v4', overrides);
+      /* Update prices in XA_PRICES */
+      newStocks.forEach(s => { window.XA_PRICES[s.ticker] = s.currentPrice; });
+      try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
+      console.log(`[XA Rebalance] Applied ${newStocks.length} stocks to ${opId}`);
+      return next;
+    });
+  }, []);
 
   return <div style={{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
     <Header view={view} setView={setView} />
@@ -1618,6 +2089,7 @@ function App() {
       {view === 'overview' && <OverviewView operators={operators} masterMacros={masterMacros} setView={setView} />}
       {view === 'macro' && <MacroView operators={operators} masterMacros={masterMacros} setMasterMacros={setMasterMacros} opToggles={opToggles} setOpToggles={setOpToggles} />}
       {view === 'operators' && <OperatorsView operators={operators} masterMacros={masterMacros} />}
+      {view === 'rebalance' && <RebalanceView operators={operators} masterMacros={masterMacros} opToggles={opToggles} snapData={snapData} onApplyRebalance={onApplyRebalance} />}
       {view === 'data' && <DataView operators={operators} masterMacros={masterMacros} snapData={snapData} setSnapData={setSnapData} />}
       {view === 'export' && <ExportView operators={operators} masterMacros={masterMacros} opToggles={opToggles} />}
     </div>

@@ -1102,6 +1102,37 @@ function FMPVerifyPanel({operators}) {
             </div>)}
         </div>
 
+        <div style={{display:'flex',gap:8,marginBottom:14}}>
+          <button onClick={() => {
+            const pm = {...window.XA_PRICES};
+            let count = 0;
+            results.matched.forEach(r => { pm[r.ticker] = r.fmpPrice; count++; });
+            window.XA_PRICES = pm;
+            OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
+            try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
+            console.log(`[FMP] Applied ${count} FMP prices — reloading...`);
+            setTimeout(() => window.location.reload(), 300);
+          }} style={{padding:'8px 18px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
+            border:'none',background:'var(--g)',color:'#000',transition:'opacity .15s'}}
+            onMouseEnter={e=>e.target.style.opacity=0.85} onMouseLeave={e=>e.target.style.opacity=1}>
+            ✓ Apply All FMP Prices ({matchCount})
+          </button>
+          {flagCount > 0 && <button onClick={() => {
+            const pm = {...window.XA_PRICES};
+            let count = 0;
+            results.flagged.forEach(r => { pm[r.ticker] = r.fmpPrice; count++; });
+            window.XA_PRICES = pm;
+            OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
+            try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
+            console.log(`[FMP] Applied ${count} flagged prices — reloading...`);
+            setTimeout(() => window.location.reload(), 300);
+          }} style={{padding:'8px 18px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
+            border:'1px solid rgba(255,193,7,.4)',background:'rgba(255,193,7,.08)',color:'var(--y)',transition:'opacity .15s'}}>
+            ⚠ Apply Flagged Only ({flagCount})
+          </button>}
+          <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',alignSelf:'center'}}>Overrides snap prices · recalculates all engines · persists in localStorage</span>
+        </div>
+
         {flagCount > 0 && <div style={{marginBottom:14}}>
           <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--y)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>⚠ Flagged Deviations</div>
           <div style={{overflowX:'auto',borderRadius:4,border:'1px solid rgba(255,193,7,.15)'}}>

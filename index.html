@@ -10,6 +10,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <style>
 :root{--bg0:#04060a;--bg1:#090c14;--bg2:#0e1220;--bg3:#161c2e;--bg4:#1e2640;--fg:#e4e8f4;--fg2:#b4bcd4;--fg3:#7580a0;--fg4:#4a5270;--border:rgba(120,140,200,.08);--border2:rgba(120,140,200,.16);--g:#00e676;--g2:#69f0ae;--r:#ff3d71;--y:#ffc107;--b:#40c4ff;--p:#b388ff;--mono:'JetBrains Mono','Fira Code','Consolas',monospace;--sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;--serif:'Instrument Serif',Georgia,serif}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}html,body,#root{height:100%}
@@ -43,6 +45,63 @@ try {
     }
   }
 } catch(e) { console.log('[XA boot] localStorage error:', e); }
+
+/* ═══════════════ FIREBASE + STATE LOGGING ═══════════════ */
+var firebaseConfig = {
+  apiKey: "AIzaSyDIYvAteMC4ASpaoB58L59gKLhW9VvfTyE",
+  authDomain: "xa-command-centre.firebaseapp.com",
+  projectId: "xa-command-centre",
+  storageBucket: "xa-command-centre.firebasestorage.app",
+  messagingSenderId: "116771394808",
+  appId: "1:116771394808:web:8e9b87f549e13b689d570d"
+};
+firebase.initializeApp(firebaseConfig);
+window.XA_DB = firebase.firestore();
+console.log('[XA Firebase] Connected to xa-command-centre');
+
+window.XALog = {
+  async write(type, data) {
+    try {
+      var event = {
+        type: type,
+        timestamp: new Date().toISOString(),
+        epoch: Date.now(),
+        data: data
+      };
+      var ref = await window.XA_DB.collection('events').add(event);
+      console.log('[XALog] ' + type + ' → ' + ref.id);
+      return ref.id;
+    } catch(e) {
+      console.error('[XALog] Write failed:', e);
+      return null;
+    }
+  },
+  async snapshot(operators, masterMacros) {
+    try {
+      var snap = {
+        type: 'snapshot',
+        timestamp: new Date().toISOString(),
+        epoch: Date.now(),
+        macros: masterMacros.map(function(m) { return { id: m.id, signal: m.signal }; }),
+        operators: operators.map(function(op) {
+          return {
+            id: op.id, name: op.name, category: op.category, team: op.team,
+            stockCount: op.stocks.length,
+            stocks: op.stocks.map(function(s) {
+              return { ticker: s.ticker, name: s.name, verdict: s.verdict, currentPrice: s.currentPrice };
+            })
+          };
+        })
+      };
+      var ref = await window.XA_DB.collection('snapshots').add(snap);
+      console.log('[XALog] snapshot → ' + ref.id);
+      return ref.id;
+    } catch(e) {
+      console.error('[XALog] Snapshot failed:', e);
+      return null;
+    }
+  }
+};
 </script>
 <script type="text/babel">
 const{useState,useMemo,useCallback,useEffect,useRef}=React;
@@ -520,6 +579,7 @@ function Header({view, setView}) {
     {id:'macro', label:'Macro', icon:'⚡'},
     {id:'operators', label:'Operators', icon:'◆'},
     {id:'rebalance', label:'Rebalance', icon:'🔄'},
+    {id:'history', label:'History', icon:'📜'},
     {id:'data', label:'Data', icon:'⬆'},
     {id:'export', label:'Export', icon:'↓'},
   ];
@@ -1128,6 +1188,10 @@ function FMPVerifyPanel({operators}) {
             OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
             try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
             console.log(`[FMP] Applied ${count} FMP prices — reloading...`);
+            window.XALog.write('price_snap', {
+              source: 'fmp', mode: 'all', count,
+              prices: results.matched.map(r => ({ticker:r.ticker, old:r.xaPrice, new:r.fmpPrice, dev:r.deviation}))
+            });
             setTimeout(() => window.location.reload(), 300);
           }} style={{padding:'8px 18px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
             border:'none',background:'var(--g)',color:'#000',transition:'opacity .15s'}}
@@ -1142,6 +1206,10 @@ function FMPVerifyPanel({operators}) {
             OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
             try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
             console.log(`[FMP] Applied ${count} flagged prices — reloading...`);
+            window.XALog.write('price_snap', {
+              source: 'fmp', mode: 'flagged_only', count,
+              prices: results.flagged.map(r => ({ticker:r.ticker, old:r.xaPrice, new:r.fmpPrice, dev:r.deviation}))
+            });
             setTimeout(() => window.location.reload(), 300);
           }} style={{padding:'8px 18px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
             border:'1px solid rgba(255,193,7,.4)',background:'rgba(255,193,7,.08)',color:'var(--y)',transition:'opacity .15s'}}>
@@ -1271,6 +1339,12 @@ function DataView({operators, masterMacros, snapData, setSnapData}) {
           });
         });
         console.log(`[XA Data Hub] Patched ${patchCount} prices. Matches: ${priceUpdates}/${allOpStocks.length}`);
+        window.XALog.write('price_snap', {
+          source: 'bloomberg', fileName: file.name,
+          totalParsed: parsed.length, totalFiltered: filtered.length,
+          priceUpdates, patchCount, unmatchedCount: unmatched.length,
+          prices: Object.entries(priceMap).map(([t,p]) => ({ticker:t, price:p}))
+        });
 
         const snapDate = new Date().toISOString().slice(0,10);
         const newSnap = { date: snapDate, fileName: file.name, totalParsed: parsed.length, totalFiltered: filtered.length, priceUpdates, priceMap, unmatched, universe: filtered };
@@ -1467,6 +1541,247 @@ function DataView({operators, masterMacros, snapData, setSnapData}) {
   </div>;
 }
 
+/* ═══════════════ HISTORY VIEW ═══════════════ */
+function HistoryView({operators, masterMacros}) {
+  const [tab, setTab] = useState('timeline');
+  const [events, setEvents] = useState([]);
+  const [snapshots, setSnapshots] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [limit, setLimit] = useState(50);
+  const [diffA, setDiffA] = useState(null);
+  const [diffB, setDiffB] = useState(null);
+  const [diffData, setDiffData] = useState(null);
+
+  /* Load events on mount */
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const evSnap = await window.XA_DB.collection('events').orderBy('epoch','desc').limit(limit).get();
+        setEvents(evSnap.docs.map(d => ({id:d.id, ...d.data()})));
+        const snSnap = await window.XA_DB.collection('snapshots').orderBy('epoch','desc').limit(30).get();
+        setSnapshots(snSnap.docs.map(d => ({id:d.id, ...d.data()})));
+      } catch(e) { console.error('[History] Load failed:', e); }
+      setLoading(false);
+    };
+    load();
+  }, [limit]);
+
+  const typeIcon = (t) => ({
+    rebalance:'🔄', price_snap:'💰', macro_change:'⚡', export:'📦', snapshot:'📸'
+  }[t] || '📝');
+  const typeColor = (t) => ({
+    rebalance:'var(--p)', price_snap:'var(--g)', macro_change:'var(--y)', export:'var(--b)', snapshot:'var(--fg3)'
+  }[t] || 'var(--fg4)');
+
+  const formatTime = (ts) => {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  };
+
+  const eventsByDate = useMemo(() => {
+    const groups = {};
+    events.forEach(e => {
+      const day = e.timestamp?.slice(0,10) || 'Unknown';
+      if (!groups[day]) groups[day] = [];
+      groups[day].push(e);
+    });
+    return Object.entries(groups).sort((a,b) => b[0].localeCompare(a[0]));
+  }, [events]);
+
+  const renderEventDetail = (ev) => {
+    const d = ev.data || {};
+    switch(ev.type) {
+      case 'rebalance':
+        return <div style={{fontSize:10,color:'var(--fg3)'}}>
+          <span style={{color:'var(--p)',fontWeight:600}}>{d.opName}</span> ({d.category}/{d.team}) → {d.stockCount} stocks
+          {d.stocks && <div style={{marginTop:4,display:'flex',gap:4,flexWrap:'wrap'}}>
+            {d.stocks.slice(0,12).map((s,i) => <Badge key={i} color={s.verdict==='long'?'var(--g)':'var(--r)'} small>{s.ticker}</Badge>)}
+            {d.stocks.length > 12 && <Badge color="var(--fg4)" small>+{d.stocks.length - 12}</Badge>}
+          </div>}
+        </div>;
+      case 'price_snap':
+        return <div style={{fontSize:10,color:'var(--fg3)'}}>
+          Source: <span style={{fontWeight:600,color:d.source==='bloomberg'?'var(--b)':'var(--g)'}}>{d.source}</span>
+          {d.mode && <> · mode: {d.mode}</>}
+          {' '}· {d.count || d.priceUpdates || 0} prices updated
+          {d.fileName && <> · {d.fileName}</>}
+        </div>;
+      case 'macro_change':
+        return <div style={{fontSize:10,color:'var(--fg3)'}}>
+          {d.activeCount} active signals
+          {d.macros && <div style={{marginTop:4,display:'flex',gap:4,flexWrap:'wrap'}}>
+            {d.macros.filter(m => m.signal !== 0).map((m,i) =>
+              <Badge key={i} color={m.signal>0?'var(--g)':'var(--r)'} small>{m.label || m.id}: {m.signal>0?'+':''}{m.signal.toFixed(2)}</Badge>
+            )}
+          </div>}
+        </div>;
+      case 'export':
+        return <div style={{fontSize:10,color:'var(--fg3)'}}>
+          {d.format?.toUpperCase()} · {d.scope} · {d.stockCount} stocks ({d.longCount}L/{d.shortCount}S)
+        </div>;
+      default:
+        return <div style={{fontSize:10,color:'var(--fg4)'}}>Event logged</div>;
+    }
+  };
+
+  /* Diff logic */
+  const loadDiff = async () => {
+    if (!diffA || !diffB) return;
+    setDiffData(null);
+    try {
+      const a = snapshots.find(s => s.id === diffA);
+      const b = snapshots.find(s => s.id === diffB);
+      if (!a || !b) return;
+
+      const aStocks = {};
+      (a.operators||[]).forEach(op => (op.stocks||[]).forEach(s => { aStocks[s.ticker] = {...s, op: op.name}; }));
+      const bStocks = {};
+      (b.operators||[]).forEach(op => (op.stocks||[]).forEach(s => { bStocks[s.ticker] = {...s, op: op.name}; }));
+
+      const allTickers = [...new Set([...Object.keys(aStocks), ...Object.keys(bStocks)])].sort();
+      const diffs = allTickers.map(t => {
+        const inA = aStocks[t], inB = bStocks[t];
+        let status = 'unchanged';
+        if (inA && !inB) status = 'removed';
+        else if (!inA && inB) status = 'added';
+        else if (inA && inB && (inA.verdict !== inB.verdict || Math.abs(inA.currentPrice - inB.currentPrice) / inA.currentPrice > 0.02)) status = 'changed';
+        return { ticker: t, status, a: inA, b: inB };
+      });
+
+      const aMacros = {};
+      (a.macros||[]).forEach(m => { aMacros[m.id] = m.signal; });
+      const bMacros = {};
+      (b.macros||[]).forEach(m => { bMacros[m.id] = m.signal; });
+      const macroChanges = Object.keys({...aMacros,...bMacros}).map(id => ({
+        id, aSignal: aMacros[id] || 0, bSignal: bMacros[id] || 0
+      })).filter(m => Math.abs(m.aSignal - m.bSignal) > 0.01);
+
+      setDiffData({ a, b, diffs, macroChanges });
+    } catch(e) { console.error('[Diff]', e); }
+  };
+
+  return <div style={{padding:32,maxWidth:1300,margin:'0 auto',animation:'fadeIn .3s ease'}}>
+    <div style={{marginBottom:24}}>
+      <h1 style={{fontSize:28,fontFamily:'var(--serif)',color:'var(--fg)',fontWeight:400,marginBottom:6}}>State History</h1>
+      <p style={{fontSize:12,color:'var(--fg4)'}}>Tracks all rebalances, price syncs, macro changes, and exports. Stored in Firebase Firestore.</p>
+    </div>
+
+    <div style={{display:'flex',gap:6,marginBottom:20}}>
+      <Btn active={tab==='timeline'} color="var(--p)" onClick={() => setTab('timeline')}>📜 Timeline</Btn>
+      <Btn active={tab==='diff'} color="var(--y)" onClick={() => setTab('diff')}>🔀 Diff</Btn>
+      <button onClick={() => { window.XALog.snapshot(operators, masterMacros); setTimeout(() => setLimit(l => l+0.001), 500); }}
+        style={{padding:'6px 12px',fontSize:10,fontFamily:'var(--mono)',fontWeight:600,borderRadius:4,cursor:'pointer',border:'1px solid rgba(0,230,118,.3)',background:'rgba(0,230,118,.08)',color:'var(--g)',marginLeft:'auto'}}>
+        📸 Save Snapshot Now
+      </button>
+    </div>
+
+    {loading && <div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontFamily:'var(--mono)',fontSize:12}}>Loading history from Firebase...</div>}
+
+    {/* TIMELINE TAB */}
+    {tab === 'timeline' && !loading && <div>
+      {events.length === 0 && <div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontSize:12}}>No events recorded yet. Events will appear here as you use XA.</div>}
+      {eventsByDate.map(([date, dayEvents]) => <div key={date} style={{marginBottom:20}}>
+        <div style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg4)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:8,borderBottom:'1px solid var(--border)',paddingBottom:4}}>{date}</div>
+        {dayEvents.map(ev => <div key={ev.id} style={{display:'flex',gap:12,padding:'10px 14px',marginBottom:4,background:'var(--bg1)',borderRadius:6,borderLeft:`3px solid ${typeColor(ev.type)}`}}>
+          <div style={{fontSize:18,lineHeight:1}}>{typeIcon(ev.type)}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+              <Badge color={typeColor(ev.type)} small>{ev.type.replace(/_/g,' ')}</Badge>
+              <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>{formatTime(ev.timestamp)}</span>
+            </div>
+            {renderEventDetail(ev)}
+          </div>
+        </div>)}
+      </div>)}
+      {events.length >= limit && <button onClick={() => setLimit(l => l + 50)} style={{padding:'8px 16px',fontSize:11,fontFamily:'var(--mono)',borderRadius:4,cursor:'pointer',border:'1px solid var(--border)',background:'transparent',color:'var(--fg4)',width:'100%'}}>
+        Load more...
+      </button>}
+    </div>}
+
+    {/* DIFF TAB */}
+    {tab === 'diff' && !loading && <div>
+      {snapshots.length < 2 && <div style={{padding:40,textAlign:'center',color:'var(--fg4)',fontSize:12}}>
+        Need at least 2 snapshots to compare. Click "Save Snapshot Now" to create one.
+      </div>}
+      {snapshots.length >= 2 && <div>
+        <div style={{display:'flex',gap:16,marginBottom:16,flexWrap:'wrap'}}>
+          <div>
+            <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginBottom:4,textTransform:'uppercase'}}>Snapshot A (older)</div>
+            <select value={diffA || ''} onChange={e => setDiffA(e.target.value)} style={{padding:'8px 12px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',minWidth:250}}>
+              <option value="">Select...</option>
+              {snapshots.map(s => <option key={s.id} value={s.id}>{formatTime(s.timestamp)} — {s.operators?.length} ops, {s.operators?.reduce((a,o)=>a+(o.stockCount||0),0)} stocks</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginBottom:4,textTransform:'uppercase'}}>Snapshot B (newer)</div>
+            <select value={diffB || ''} onChange={e => setDiffB(e.target.value)} style={{padding:'8px 12px',fontSize:11,fontFamily:'var(--mono)',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:4,color:'var(--fg)',minWidth:250}}>
+              <option value="">Select...</option>
+              {snapshots.map(s => <option key={s.id} value={s.id}>{formatTime(s.timestamp)} — {s.operators?.length} ops, {s.operators?.reduce((a,o)=>a+(o.stockCount||0),0)} stocks</option>)}
+            </select>
+          </div>
+          <button onClick={loadDiff} disabled={!diffA || !diffB} style={{padding:'8px 16px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:(!diffA||!diffB)?'not-allowed':'pointer',
+            border:'none',background:(!diffA||!diffB)?'var(--bg3)':'var(--y)',color:'#000',alignSelf:'flex-end'}}>
+            Compare
+          </button>
+        </div>
+
+        {diffData && <div>
+          {/* Summary */}
+          <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+            <Badge color="var(--g)">{diffData.diffs.filter(d=>d.status==='added').length} Added</Badge>
+            <Badge color="var(--r)">{diffData.diffs.filter(d=>d.status==='removed').length} Removed</Badge>
+            <Badge color="var(--y)">{diffData.diffs.filter(d=>d.status==='changed').length} Changed</Badge>
+            <Badge color="var(--fg3)">{diffData.diffs.filter(d=>d.status==='unchanged').length} Unchanged</Badge>
+            {diffData.macroChanges.length > 0 && <Badge color="var(--p)">{diffData.macroChanges.length} Macro shifts</Badge>}
+          </div>
+
+          {/* Macro changes */}
+          {diffData.macroChanges.length > 0 && <div style={{marginBottom:16}}>
+            <div style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--p)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:6}}>⚡ Macro Signal Changes</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {diffData.macroChanges.map(m => <div key={m.id} style={{padding:'4px 10px',background:'var(--bg1)',borderRadius:4,fontSize:10,fontFamily:'var(--mono)'}}>
+                <span style={{color:'var(--fg3)'}}>{m.id}</span>
+                {' '}<span style={{color:'var(--r)'}}>{m.aSignal>0?'+':''}{m.aSignal.toFixed(2)}</span>
+                {' → '}<span style={{color:'var(--g)'}}>{m.bSignal>0?'+':''}{m.bSignal.toFixed(2)}</span>
+              </div>)}
+            </div>
+          </div>}
+
+          {/* Stock diff table */}
+          <div style={{overflowX:'auto',borderRadius:6,border:'1px solid var(--border)'}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:10,fontFamily:'var(--mono)'}}>
+              <thead><tr style={{background:'var(--bg1)'}}>
+                {['Status','Ticker','Name','Operator','Side A→B','Price A','Price B','Δ%'].map(h =>
+                  <th key={h} style={{padding:'7px 8px',textAlign:'left',color:'var(--fg3)',fontSize:8,textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid var(--border)',whiteSpace:'nowrap'}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{diffData.diffs.filter(d => d.status !== 'unchanged').map((d,i) => {
+                const sc = d.status==='added'?'var(--g)':d.status==='removed'?'var(--r)':'var(--y)';
+                const pA = d.a?.currentPrice, pB = d.b?.currentPrice;
+                const delta = pA && pB ? ((pB - pA) / pA * 100).toFixed(1) : '—';
+                return <tr key={i} style={{borderBottom:'1px solid var(--border)',background:d.status==='added'?'rgba(0,230,118,.02)':d.status==='removed'?'rgba(255,61,113,.02)':'transparent'}}>
+                  <td style={{padding:'6px 8px'}}><Badge color={sc} small>{d.status}</Badge></td>
+                  <td style={{padding:'6px 8px',fontWeight:700,color:'var(--fg)'}}>{d.ticker}</td>
+                  <td style={{padding:'6px 8px',color:'var(--fg3)'}}>{d.a?.name || d.b?.name}</td>
+                  <td style={{padding:'6px 8px',color:'var(--fg4)'}}>{d.a?.op || d.b?.op}</td>
+                  <td style={{padding:'6px 8px'}}>{d.a?.verdict || '—'} → {d.b?.verdict || '—'}</td>
+                  <td style={{padding:'6px 8px',color:'var(--fg3)'}}>{pA ? fmt(pA,'price') : '—'}</td>
+                  <td style={{padding:'6px 8px',color:'var(--fg3)'}}>{pB ? fmt(pB,'price') : '—'}</td>
+                  <td style={{padding:'6px 8px',color:delta > 0?'var(--g)':delta < 0?'var(--r)':'var(--fg4)'}}>{delta !== '—' ? delta+'%' : '—'}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+          {diffData.diffs.filter(d => d.status === 'unchanged').length > 0 && <div style={{padding:8,fontSize:9,color:'var(--fg4)',fontFamily:'var(--mono)',textAlign:'center'}}>
+            + {diffData.diffs.filter(d => d.status === 'unchanged').length} unchanged positions not shown
+          </div>}
+        </div>}
+      </div>}
+    </div>}
+  </div>;
+}
+
 /* ═══════════════ REBALANCE VIEW ═══════════════ */
 const OPERATOR_SECTORS = {
   tig:['airline','hotel','travel','leisure','booking','airport','hospitality','tourism','cruise'],
@@ -1633,9 +1948,35 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
     };
   };
 
+  const syncFMPPrices = async (stocks) => {
+    const fmpKey = localStorage.getItem('xa_fmp_key');
+    if (!fmpKey) return 0;
+    const tickers = stocks.map(s => s.ticker);
+    const res = await fetchFMPQuotes(tickers, fmpKey);
+    if (res.error || !res.quotes) return 0;
+    let updated = 0;
+    stocks.forEach(s => {
+      const q = res.quotes[s.ticker];
+      if (q && q.price > 0) { s.currentPrice = q.price; window.XA_PRICES[s.ticker] = q.price; updated++; }
+    });
+    if (updated > 0) {
+      try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
+    }
+    return updated;
+  };
+
   const rebalanceOp = async (op) => {
+    /* Step 1: Sync FMP prices */
+    setProgress(`${op.icon} ${op.name}: syncing FMP prices...`);
+    const fmpCount = await syncFMPPrices(op.stocks);
+    if (fmpCount > 0) {
+      setProgress(`${op.icon} ${op.name}: updated ${fmpCount} prices from FMP — calling Claude...`);
+      window.XALog.write('price_snap', { source: 'fmp_auto', mode: 'rebalance_prefetch', opId: op.id, count: fmpCount });
+    }
+    else setProgress(`${op.icon} ${op.name}: calling Claude (no FMP key or no matches)...`);
+
+    /* Step 2: Call Claude with fresh prices */
     const prompt = buildRebalancePrompt(op, masterMacros, universe, opToggles);
-    setProgress(`${op.icon} ${op.name}: calling Claude...`);
     const text = await callClaude(prompt);
     setProgress(`${op.icon} ${op.name}: parsing response...`);
     return parseResponse(text, op.id);
@@ -1922,11 +2263,7 @@ function ExportView({operators, masterMacros, opToggles}) {
     const out = [];
     scoped.forEach(op => {
       op.stocks.forEach(s => {
-        const activeMap = op.macroMap.filter(m => {
-          const key = `${op.id}__${m.macroId}`;
-          return opToggles[key] !== false;
-        });
-        const eng = runEngine(s, activeMap, masterMacros);
+        const eng = runEngine(s, op.macroMap, masterMacros);
         const pt = getConvictionPT(s, eng);
         out.push({
           ticker: s.ticker, name: s.name, side: s.verdict,
@@ -1943,6 +2280,12 @@ function ExportView({operators, masterMacros, opToggles}) {
 
   const doExport = () => {
     const ts = new Date().toISOString().slice(0,10);
+    window.XALog.write('export', {
+      format, scope, category: catFilter,
+      stockCount: rows.length, longCount: rows.filter(r=>r.side==='long').length,
+      shortCount: rows.filter(r=>r.side==='short').length,
+      tickers: rows.map(r => r.ticker)
+    });
     if (format === 'csv') {
       const headers = ['ticker','name','side','operator','category','team','current_price','bull_pt','bear_pt','conviction','ev','rr_pct','skew','engine_verdict','tier'];
       const csv = [headers.join(','), ...rows.map(r => headers.map(h => {
@@ -2079,6 +2422,22 @@ function App() {
   useEffect(() => { LS.set('xa_master_macros_v4', masterMacros); }, [masterMacros]);
   useEffect(() => { LS.set('xa_op_toggles_v4', opToggles); }, [opToggles]);
 
+  /* Debounced macro change logging — fires 3s after last slider move */
+  const macroLogTimer = useRef(null);
+  useEffect(() => {
+    if (macroLogTimer.current) clearTimeout(macroLogTimer.current);
+    macroLogTimer.current = setTimeout(() => {
+      const changed = masterMacros.filter(m => m.signal !== 0);
+      if (changed.length > 0) {
+        window.XALog.write('macro_change', {
+          macros: masterMacros.map(m => ({ id: m.id, label: m.label, signal: m.signal })),
+          activeCount: changed.length
+        });
+      }
+    }, 3000);
+    return () => { if (macroLogTimer.current) clearTimeout(macroLogTimer.current); };
+  }, [masterMacros]);
+
   const onApplyRebalance = useCallback((opId, newStocks) => {
     /* Update live state */
     setOperators(prev => {
@@ -2094,6 +2453,14 @@ function App() {
       newStocks.forEach(s => { window.XA_PRICES[s.ticker] = s.currentPrice; });
       try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
       console.log(`[XA Rebalance] Applied ${newStocks.length} stocks to ${opId}`);
+      /* Log to Firebase */
+      const op = next.find(o => o.id === opId);
+      window.XALog.write('rebalance', {
+        opId, opName: op?.name, category: op?.category, team: op?.team,
+        stockCount: newStocks.length,
+        stocks: newStocks.map(s => ({ ticker: s.ticker, name: s.name, verdict: s.verdict, currentPrice: s.currentPrice }))
+      });
+      window.XALog.snapshot(next, masterMacros);
       return next;
     });
   }, []);
@@ -2105,6 +2472,7 @@ function App() {
       {view === 'macro' && <MacroView operators={operators} masterMacros={masterMacros} setMasterMacros={setMasterMacros} opToggles={opToggles} setOpToggles={setOpToggles} />}
       {view === 'operators' && <OperatorsView operators={operators} masterMacros={masterMacros} />}
       {view === 'rebalance' && <RebalanceView operators={operators} masterMacros={masterMacros} opToggles={opToggles} snapData={snapData} onApplyRebalance={onApplyRebalance} />}
+      {view === 'history' && <HistoryView operators={operators} masterMacros={masterMacros} />}
       {view === 'data' && <DataView operators={operators} masterMacros={masterMacros} snapData={snapData} setSnapData={setSnapData} />}
       {view === 'export' && <ExportView operators={operators} masterMacros={masterMacros} opToggles={opToggles} />}
     </div>

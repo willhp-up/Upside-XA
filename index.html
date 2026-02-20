@@ -102,6 +102,73 @@ window.XALog = {
     }
   }
 };
+
+/* ═══════════════ FIREBASE STATE SYNC ═══════════════ */
+window.XA_SYNCED = false;
+window.XASync = {
+  _debounce: {},
+  /* Write with debounce to avoid hammering Firestore */
+  _debouncedWrite: function(docId, data, delay) {
+    if (this._debounce[docId]) clearTimeout(this._debounce[docId]);
+    this._debounce[docId] = setTimeout(function() {
+      window.XA_DB.collection('state').doc(docId).set(data, {merge: true})
+        .then(function() { console.log('[XASync] Wrote ' + docId); })
+        .catch(function(e) { console.error('[XASync] Write ' + docId + ' failed:', e); });
+    }, delay || 1000);
+  },
+
+  /* Read a state document */
+  read: async function(docId) {
+    try {
+      var doc = await window.XA_DB.collection('state').doc(docId).get();
+      if (doc.exists) {
+        console.log('[XASync] Read ' + docId);
+        return doc.data();
+      }
+      console.log('[XASync] No ' + docId + ' in Firestore — will use local');
+      return null;
+    } catch(e) {
+      console.error('[XASync] Read ' + docId + ' failed:', e);
+      return null;
+    }
+  },
+
+  /* Save operator overrides */
+  saveOperators: function(overrides) {
+    this._debouncedWrite('operators', { overrides: overrides, updatedAt: new Date().toISOString() }, 500);
+  },
+
+  /* Save macro signals */
+  saveMacros: function(macros) {
+    this._debouncedWrite('macros', { signals: macros.map(function(m) { return { id: m.id, signal: m.signal }; }), updatedAt: new Date().toISOString() }, 1500);
+  },
+
+  /* Save op toggles */
+  saveToggles: function(toggles) {
+    this._debouncedWrite('toggles', { toggles: toggles, updatedAt: new Date().toISOString() }, 1000);
+  },
+
+  /* Save prices */
+  savePrices: function(priceMap) {
+    this._debouncedWrite('prices', { prices: priceMap, updatedAt: new Date().toISOString() }, 500);
+  },
+
+  /* Save API keys */
+  saveKeys: function(keys) {
+    window.XA_DB.collection('state').doc('keys').set({ keys: keys, updatedAt: new Date().toISOString() })
+      .then(function() { console.log('[XASync] Keys saved to Firestore'); })
+      .catch(function(e) { console.error('[XASync] Keys save failed:', e); });
+  },
+
+  /* Read API keys */
+  readKeys: async function() {
+    try {
+      var doc = await window.XA_DB.collection('state').doc('keys').get();
+      if (doc.exists) return doc.data().keys || {};
+      return {};
+    } catch(e) { return {}; }
+  }
+};
 </script>
 <script type="text/babel">
 const{useState,useMemo,useCallback,useEffect,useRef}=React;
@@ -1083,8 +1150,14 @@ function FMPVerifyPanel({operators}) {
   const [expanded, setExpanded] = useState(false);
 
   const saveKey = (k) => {
-    setApiKey(k);
-    try { localStorage.setItem('xa_fmp_key', k); } catch {}
+    const trimmed = k.trim();
+    setApiKey(trimmed);
+    try { localStorage.setItem('xa_fmp_key', trimmed); } catch {}
+    if (trimmed && window.XA_SYNCED) {
+      window.XASync.readKeys().then(keys => {
+        window.XASync.saveKeys({...keys, fmp: trimmed});
+      });
+    }
   };
 
   const allStocks = useMemo(() => {
@@ -1187,6 +1260,7 @@ function FMPVerifyPanel({operators}) {
             window.XA_PRICES = pm;
             OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
             try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
+            if (window.XA_SYNCED) window.XASync.savePrices(pm);
             console.log(`[FMP] Applied ${count} FMP prices — reloading...`);
             window.XALog.write('price_snap', {
               source: 'fmp', mode: 'all', count,
@@ -1205,6 +1279,7 @@ function FMPVerifyPanel({operators}) {
             window.XA_PRICES = pm;
             OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
             try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
+            if (window.XA_SYNCED) window.XASync.savePrices(pm);
             console.log(`[FMP] Applied ${count} flagged prices — reloading...`);
             window.XALog.write('price_snap', {
               source: 'fmp', mode: 'flagged_only', count,
@@ -1351,6 +1426,7 @@ function DataView({operators, masterMacros, snapData, setSnapData}) {
         setSnapData(newSnap);
 
         try { localStorage.setItem('xa_prices', JSON.stringify(priceMap)); } catch(e) {}
+        if (window.XA_SYNCED) window.XASync.savePrices(priceMap);
         try { LS.set('xa_snap_v3', newSnap); } catch(e) {
           try { LS.set('xa_snap_v3', {...newSnap, universe: []}); } catch(e2) {
             try { LS.set('xa_snap_v3', {date: snapDate, priceMap, priceUpdates}); } catch(e3) {}
@@ -1895,7 +1971,16 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
   const [allResults, setAllResults] = useState([]); /* for rebalance-all mode */
   const [mode, setMode] = useState('single'); /* 'single' or 'all' */
 
-  const saveKey = (k) => { const trimmed = k.trim(); setAnthropicKey(trimmed); try { localStorage.setItem('xa_anthropic_key', trimmed); } catch {} };
+  const saveKey = (k) => {
+    const trimmed = k.trim();
+    setAnthropicKey(trimmed);
+    try { localStorage.setItem('xa_anthropic_key', trimmed); } catch {}
+    if (trimmed && window.XA_SYNCED) {
+      window.XASync.readKeys().then(keys => {
+        window.XASync.saveKeys({...keys, anthropic: trimmed});
+      });
+    }
+  };
   const universe = snapData?.universe || [];
 
   const callClaude = async (prompt) => {
@@ -1961,6 +2046,7 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
     });
     if (updated > 0) {
       try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
+      if (window.XA_SYNCED) window.XASync.savePrices(window.XA_PRICES);
     }
     return updated;
   };
@@ -2398,29 +2484,101 @@ function ExportView({operators, masterMacros, opToggles}) {
 /* ═══════════════ APP SHELL ═══════════════ */
 function App() {
   const [view, setView] = useState('overview');
+  const [booting, setBooting] = useState(true);
   const [masterMacros, setMasterMacros] = useState(() => {
     const saved = LS.get('xa_master_macros_v4');
     return saved || MASTER_MACROS_DEFAULT.map(m => ({...m}));
   });
   const [opToggles, setOpToggles] = useState(() => LS.get('xa_op_toggles_v4') || {});
   const [snapData, setSnapData] = useState(() => LS.get('xa_snap_v3'));
-
-  /* Mutable operators: load overrides from localStorage on boot */
   const [operators, setOperators] = useState(() => {
     const overrides = LS.get('xa_op_overrides_v4');
     if (overrides && typeof overrides === 'object') {
-      return OPERATORS.map(op => {
-        if (overrides[op.id]) {
-          return { ...op, stocks: overrides[op.id] };
-        }
-        return op;
-      });
+      return OPERATORS.map(op => overrides[op.id] ? { ...op, stocks: overrides[op.id] } : op);
     }
     return OPERATORS;
   });
+  const bootedRef = useRef(false);
 
-  useEffect(() => { LS.set('xa_master_macros_v4', masterMacros); }, [masterMacros]);
-  useEffect(() => { LS.set('xa_op_toggles_v4', opToggles); }, [opToggles]);
+  /* ─── Boot: load from Firebase, fall back to localStorage ─── */
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    const boot = async () => {
+      try {
+        /* Macros */
+        const fbMacros = await window.XASync.read('macros');
+        if (fbMacros && fbMacros.signals) {
+          const merged = MASTER_MACROS_DEFAULT.map(m => {
+            const fb = fbMacros.signals.find(s => s.id === m.id);
+            return fb ? {...m, signal: fb.signal} : {...m};
+          });
+          setMasterMacros(merged);
+          LS.set('xa_master_macros_v4', merged);
+          console.log('[XA Boot] Macros loaded from Firebase');
+        }
+
+        /* Operator overrides */
+        const fbOps = await window.XASync.read('operators');
+        if (fbOps && fbOps.overrides) {
+          const updated = OPERATORS.map(op => {
+            if (fbOps.overrides[op.id]) {
+              op.stocks = fbOps.overrides[op.id];
+              return { ...op, stocks: fbOps.overrides[op.id] };
+            }
+            return op;
+          });
+          setOperators(updated);
+          LS.set('xa_op_overrides_v4', fbOps.overrides);
+          console.log('[XA Boot] Operators loaded from Firebase');
+        }
+
+        /* Toggles */
+        const fbToggles = await window.XASync.read('toggles');
+        if (fbToggles && fbToggles.toggles) {
+          setOpToggles(fbToggles.toggles);
+          LS.set('xa_op_toggles_v4', fbToggles.toggles);
+          console.log('[XA Boot] Toggles loaded from Firebase');
+        }
+
+        /* Prices */
+        const fbPrices = await window.XASync.read('prices');
+        if (fbPrices && fbPrices.prices && Object.keys(fbPrices.prices).length > 0) {
+          window.XA_PRICES = fbPrices.prices;
+          OPERATORS.forEach(op => {
+            op.stocks.forEach(s => {
+              if (fbPrices.prices[s.ticker] != null) s.currentPrice = fbPrices.prices[s.ticker];
+            });
+          });
+          try { localStorage.setItem('xa_prices', JSON.stringify(fbPrices.prices)); } catch {}
+          console.log('[XA Boot] Prices loaded from Firebase (' + Object.keys(fbPrices.prices).length + ')');
+        }
+
+        /* API keys */
+        const fbKeys = await window.XASync.readKeys();
+        if (fbKeys.anthropic) { try { localStorage.setItem('xa_anthropic_key', fbKeys.anthropic); } catch {} }
+        if (fbKeys.fmp) { try { localStorage.setItem('xa_fmp_key', fbKeys.fmp); } catch {} }
+        if (fbKeys.anthropic || fbKeys.fmp) console.log('[XA Boot] API keys loaded from Firebase');
+
+        window.XA_SYNCED = true;
+      } catch(e) {
+        console.warn('[XA Boot] Firebase sync failed, using localStorage:', e);
+      }
+      setBooting(false);
+    };
+    boot();
+  }, []);
+
+  /* ─── Persist + Sync: write to both localStorage and Firebase ─── */
+  useEffect(() => {
+    LS.set('xa_master_macros_v4', masterMacros);
+    if (window.XA_SYNCED) window.XASync.saveMacros(masterMacros);
+  }, [masterMacros]);
+
+  useEffect(() => {
+    LS.set('xa_op_toggles_v4', opToggles);
+    if (window.XA_SYNCED) window.XASync.saveToggles(opToggles);
+  }, [opToggles]);
 
   /* Debounced macro change logging — fires 3s after last slider move */
   const macroLogTimer = useRef(null);
@@ -2439,19 +2597,20 @@ function App() {
   }, [masterMacros]);
 
   const onApplyRebalance = useCallback((opId, newStocks) => {
-    /* Update live state */
     setOperators(prev => {
       const next = prev.map(op => op.id === opId ? { ...op, stocks: newStocks } : op);
-      /* Also update the global OPERATORS so engines use new data */
       const idx = OPERATORS.findIndex(o => o.id === opId);
       if (idx >= 0) OPERATORS[idx].stocks = newStocks;
-      /* Persist overrides */
+      /* Persist to localStorage */
       const overrides = LS.get('xa_op_overrides_v4') || {};
       overrides[opId] = newStocks;
       LS.set('xa_op_overrides_v4', overrides);
-      /* Update prices in XA_PRICES */
+      /* Sync to Firebase */
+      if (window.XA_SYNCED) window.XASync.saveOperators(overrides);
+      /* Update prices */
       newStocks.forEach(s => { window.XA_PRICES[s.ticker] = s.currentPrice; });
       try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
+      if (window.XA_SYNCED) window.XASync.savePrices(window.XA_PRICES);
       console.log(`[XA Rebalance] Applied ${newStocks.length} stocks to ${opId}`);
       /* Log to Firebase */
       const op = next.find(o => o.id === opId);
@@ -2463,7 +2622,12 @@ function App() {
       window.XALog.snapshot(next, masterMacros);
       return next;
     });
-  }, []);
+  }, [masterMacros]);
+
+  if (booting) return <div style={{height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:12}}>
+    <div style={{width:10,height:10,borderRadius:'50%',background:'var(--g)',animation:'pulse 1s infinite'}} />
+    <div style={{fontSize:12,fontFamily:'var(--mono)',color:'var(--fg4)'}}>Syncing from Firebase...</div>
+  </div>;
 
   return <div style={{height:'100vh',display:'flex',flexDirection:'column',overflow:'hidden'}}>
     <Header view={view} setView={setView} />

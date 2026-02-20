@@ -230,9 +230,18 @@ function runEngine(stock, macroMap, masterMacros){
   else if(rr>8&&skew>0.8)vd="LONG";
   else if(rr<-15&&skew<0.6)vd="STRONG SHORT";
   else if(rr<-8&&skew<0.8)vd="SHORT";
+
+  /* Tier: mechanical R/R tier, then capped by alignment checks */
   let tier="Watchlist";
   if(Math.abs(rr)>15)tier="Core";
   else if(Math.abs(rr)>8)tier="Satellite";
+
+  /* Downgrade if engine direction conflicts with operator side */
+  const side = stock.verdict || '';
+  const engineBull = rr > 0;
+  const opLong = side === 'long';
+  if ((opLong && !engineBull) || (!opLong && engineBull)) tier = "Watchlist";
+
   return{pr,ev,rr,skew,vd,tier,c};
 }
 
@@ -2367,13 +2376,17 @@ function ExportView({operators, masterMacros, opToggles}) {
       op.stocks.forEach(s => {
         const eng = runEngine(s, op.macroMap, masterMacros);
         const pt = getConvictionPT(s, eng);
+        /* If long with no bull PT, or short with no bear PT → stale, force Watchlist */
+        let tier = eng?.tier || 'Watchlist';
+        if (s.verdict === 'long' && pt.bullPT == null) tier = 'Watchlist';
+        if (s.verdict === 'short' && pt.bearPT == null) tier = 'Watchlist';
         out.push({
           ticker: s.ticker, name: s.name, side: s.verdict,
           operator: op.name, category: op.category, team: op.team,
           current_price: s.currentPrice,
           bull_pt: pt.bullPT, bear_pt: pt.bearPT, conviction: pt.conviction,
           ev: eng?.ev, rr_pct: eng?.rr, skew: eng?.skew,
-          engine_verdict: eng?.vd, tier: eng?.tier,
+          engine_verdict: eng?.vd, tier,
         });
       });
     });

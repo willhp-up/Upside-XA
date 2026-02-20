@@ -138,6 +138,14 @@ window.XASync = {
     this._debouncedWrite('operators', { overrides: overrides, updatedAt: new Date().toISOString() }, 500);
   },
 
+  /* Save operators immediately — use before page reloads */
+  saveOperatorsNow: function(overrides) {
+    return window.XA_DB.collection('state').doc('operators').set(
+      { overrides: overrides, updatedAt: new Date().toISOString() }, {merge: true}
+    ).then(function() { console.log('[XASync] Wrote operators (immediate)'); })
+     .catch(function(e) { console.error('[XASync] Operators write failed:', e); });
+  },
+
   /* Save macro signals */
   saveMacros: function(macros) {
     this._debouncedWrite('macros', { signals: macros.map(function(m) { return { id: m.id, signal: m.signal }; }), updatedAt: new Date().toISOString() }, 1500);
@@ -148,9 +156,17 @@ window.XASync = {
     this._debouncedWrite('toggles', { toggles: toggles, updatedAt: new Date().toISOString() }, 1000);
   },
 
-  /* Save prices */
+  /* Save prices — debounced for slider-driven updates */
   savePrices: function(priceMap) {
     this._debouncedWrite('prices', { prices: priceMap, updatedAt: new Date().toISOString() }, 500);
+  },
+
+  /* Save prices immediately — use before page reloads */
+  savePricesNow: function(priceMap) {
+    return window.XA_DB.collection('state').doc('prices').set(
+      { prices: priceMap, updatedAt: new Date().toISOString() }, {merge: true}
+    ).then(function() { console.log('[XASync] Wrote prices (immediate)'); })
+     .catch(function(e) { console.error('[XASync] Prices write failed:', e); });
   },
 
   /* Save API keys */
@@ -1253,39 +1269,39 @@ function FMPVerifyPanel({operators}) {
         </div>
 
         <div style={{display:'flex',gap:8,marginBottom:14}}>
-          <button onClick={() => {
+          <button onClick={async () => {
             const pm = {...window.XA_PRICES};
             let count = 0;
             results.matched.forEach(r => { pm[r.ticker] = r.fmpPrice; count++; });
             window.XA_PRICES = pm;
             OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
             try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
-            if (window.XA_SYNCED) window.XASync.savePrices(pm);
+            if (window.XA_SYNCED) await window.XASync.savePricesNow(pm);
             console.log(`[FMP] Applied ${count} FMP prices — reloading...`);
             window.XALog.write('price_snap', {
               source: 'fmp', mode: 'all', count,
               prices: results.matched.map(r => ({ticker:r.ticker, old:r.xaPrice, new:r.fmpPrice, dev:r.deviation}))
             });
-            setTimeout(() => window.location.reload(), 300);
+            setTimeout(() => window.location.reload(), 400);
           }} style={{padding:'8px 18px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
             border:'none',background:'var(--g)',color:'#000',transition:'opacity .15s'}}
             onMouseEnter={e=>e.target.style.opacity=0.85} onMouseLeave={e=>e.target.style.opacity=1}>
             ✓ Apply All FMP Prices ({matchCount})
           </button>
-          {flagCount > 0 && <button onClick={() => {
+          {flagCount > 0 && <button onClick={async () => {
             const pm = {...window.XA_PRICES};
             let count = 0;
             results.flagged.forEach(r => { pm[r.ticker] = r.fmpPrice; count++; });
             window.XA_PRICES = pm;
             OPERATORS.forEach(op => { op.stocks.forEach(s => { if (pm[s.ticker] != null) s.currentPrice = pm[s.ticker]; }); });
             try { localStorage.setItem('xa_prices', JSON.stringify(pm)); } catch {}
-            if (window.XA_SYNCED) window.XASync.savePrices(pm);
+            if (window.XA_SYNCED) await window.XASync.savePricesNow(pm);
             console.log(`[FMP] Applied ${count} flagged prices — reloading...`);
             window.XALog.write('price_snap', {
               source: 'fmp', mode: 'flagged_only', count,
               prices: results.flagged.map(r => ({ticker:r.ticker, old:r.xaPrice, new:r.fmpPrice, dev:r.deviation}))
             });
-            setTimeout(() => window.location.reload(), 300);
+            setTimeout(() => window.location.reload(), 400);
           }} style={{padding:'8px 18px',fontSize:11,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
             border:'1px solid rgba(255,193,7,.4)',background:'rgba(255,193,7,.08)',color:'var(--y)',transition:'opacity .15s'}}>
             ⚠ Apply Flagged Only ({flagCount})
@@ -2605,12 +2621,14 @@ function App() {
       const overrides = LS.get('xa_op_overrides_v4') || {};
       overrides[opId] = newStocks;
       LS.set('xa_op_overrides_v4', overrides);
-      /* Sync to Firebase */
-      if (window.XA_SYNCED) window.XASync.saveOperators(overrides);
       /* Update prices */
       newStocks.forEach(s => { window.XA_PRICES[s.ticker] = s.currentPrice; });
       try { localStorage.setItem('xa_prices', JSON.stringify(window.XA_PRICES)); } catch {}
-      if (window.XA_SYNCED) window.XASync.savePrices(window.XA_PRICES);
+      /* Sync to Firebase (immediate — page may reload soon) */
+      if (window.XA_SYNCED) {
+        window.XASync.saveOperatorsNow(overrides);
+        window.XASync.savePricesNow(window.XA_PRICES);
+      }
       console.log(`[XA Rebalance] Applied ${newStocks.length} stocks to ${opId}`);
       /* Log to Firebase */
       const op = next.find(o => o.id === opId);

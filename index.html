@@ -2380,7 +2380,7 @@ function toBBG(ticker) {
   /* No suffix → US equity */
   return { bbg: ticker + ' US Equity', ccy: 'USD' };
 }
-const CONV_NUM = { STRONG:1, MODERATE:2, MILD:3, NEUTRAL:4 };
+const CONV_NUM = { STRONG:5, MODERATE:4, MILD:3, NEUTRAL:2 };
 
 function ExportView({operators, masterMacros, opToggles}) {
   const [scope, setScope] = useState('all');
@@ -2488,12 +2488,13 @@ function ExportView({operators, masterMacros, opToggles}) {
     <div style={{background:'var(--bg1)',borderRadius:8,border:'1px solid var(--border)',padding:16,marginBottom:20}}>
       <div style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:'var(--y)',marginBottom:6,textTransform:'uppercase',letterSpacing:'.1em'}}>Bloomberg Idea CSV (per operator)</div>
       <p style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',marginBottom:12}}>
-        bbg_ticker · currency · target_price · target_date · conviction — one file per operator. Uses bull PT for longs, bear PT for shorts. Stocks with no valid PT are excluded.
+        bbg_ticker · currency · target_price · target_date · conviction (5=strongest, 1=lowest) — one file per operator. Uses bull PT for longs, bear PT for shorts. Stocks with no valid PT are excluded.
       </p>
       <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
-        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginRight:4}}>TARGET DATE:</span>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginRight:4}}>RETURN HORIZON:</span>
         <input type="date" id="xa-idea-date" defaultValue={(() => { const d = new Date(); d.setMonth(d.getMonth()+6); return d.toISOString().slice(0,10); })()}
           style={{padding:'4px 8px',fontSize:10,fontFamily:'var(--mono)',background:'var(--bg)',color:'var(--fg)',border:'1px solid var(--border)',borderRadius:4}} />
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)'}}>Date by which we expect the target to be achieved</span>
       </div>
       <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
         {scoped.map(op => {

@@ -2358,6 +2358,30 @@ function RebalanceView({operators, masterMacros, opToggles, snapData, onApplyReb
 }
 
 /* ═══════════════ EXPORT VIEW ═══════════════ */
+
+/* Bloomberg ticker + currency mapping */
+const BBG_EXCHANGE = {
+  '.L':'LN','.DE':'GR','.PA':'FP','.ST':'SS','.MI':'IM','.SW':'SW',
+  '.OL':'NO','.IS':'TI','.AX':'AU','.HK':'HK','.KS':'KS','.T':'JP',
+  '.NS':'IN','.SI':'SP','.TW':'TT','.JK':'IJ'
+};
+const BBG_CCY = {
+  'LN':'GBp','GR':'EUR','FP':'EUR','SS':'SEK','IM':'EUR','SW':'CHF',
+  'NO':'NOK','TI':'TRY','AU':'AUD','HK':'HKD','KS':'KRW','JP':'JPY',
+  'IN':'INR','SP':'SGD','TT':'TWD','IJ':'IDR','US':'USD'
+};
+function toBBG(ticker) {
+  for (const [sfx, exch] of Object.entries(BBG_EXCHANGE)) {
+    if (ticker.endsWith(sfx)) {
+      const root = ticker.slice(0, -sfx.length);
+      return { bbg: root + ' ' + exch + ' Equity', ccy: BBG_CCY[exch] || 'USD' };
+    }
+  }
+  /* No suffix → US equity */
+  return { bbg: ticker + ' US Equity', ccy: 'USD' };
+}
+const CONV_NUM = { STRONG:1, MODERATE:2, MILD:3, NEUTRAL:4 };
+
 function ExportView({operators, masterMacros, opToggles}) {
   const [scope, setScope] = useState('all');
   const [catFilter, setCatFilter] = useState('all');
@@ -2456,10 +2480,75 @@ function ExportView({operators, masterMacros, opToggles}) {
       </div>)}
     </div>
 
-    <button onClick={doExport} style={{padding:'12px 28px',borderRadius:6,fontSize:13,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',border:'none',background:'var(--g)',color:'#000',marginBottom:24,transition:'opacity .15s'}}
+    <button onClick={doExport} style={{padding:'12px 28px',borderRadius:6,fontSize:13,fontFamily:'var(--mono)',fontWeight:700,cursor:'pointer',border:'none',background:'var(--g)',color:'#000',marginBottom:12,transition:'opacity .15s'}}
       onMouseEnter={e=>e.target.style.opacity=0.85} onMouseLeave={e=>e.target.style.opacity=1}>
       ↓ Export {rows.length} Stocks as {format.toUpperCase()}
     </button>
+
+    <div style={{background:'var(--bg1)',borderRadius:8,border:'1px solid var(--border)',padding:16,marginBottom:20}}>
+      <div style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:'var(--y)',marginBottom:6,textTransform:'uppercase',letterSpacing:'.1em'}}>Bloomberg Idea CSV (per operator)</div>
+      <p style={{fontSize:10,fontFamily:'var(--mono)',color:'var(--fg4)',marginBottom:12}}>
+        bbg_ticker · currency · target_price · target_date · conviction — one file per operator. Uses bull PT for longs, bear PT for shorts. Stocks with no valid PT are excluded.
+      </p>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center',marginBottom:10}}>
+        <span style={{fontSize:9,fontFamily:'var(--mono)',color:'var(--fg4)',marginRight:4}}>TARGET DATE:</span>
+        <input type="date" id="xa-idea-date" defaultValue={(() => { const d = new Date(); d.setMonth(d.getMonth()+6); return d.toISOString().slice(0,10); })()}
+          style={{padding:'4px 8px',fontSize:10,fontFamily:'var(--mono)',background:'var(--bg)',color:'var(--fg)',border:'1px solid var(--border)',borderRadius:4}} />
+      </div>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {scoped.map(op => {
+          const opRows = [];
+          op.stocks.forEach(s => {
+            const eng = runEngine(s, op.macroMap, masterMacros);
+            const pt = getConvictionPT(s, eng);
+            const targetPx = s.verdict === 'long' ? pt.bullPT : pt.bearPT;
+            if (targetPx == null) return;
+            const b = toBBG(s.ticker);
+            opRows.push({ bbg: b.bbg, ccy: b.ccy, target: targetPx, conviction: CONV_NUM[pt.conviction] || 4 });
+          });
+          return <button key={op.id} onClick={() => {
+            const td = document.getElementById('xa-idea-date')?.value || new Date().toISOString().slice(0,10);
+            const header = 'bbg_ticker,currency,target_price,target_date,conviction';
+            const csv = [header, ...opRows.map(r => `${r.bbg},${r.ccy},${r.target},${td},${r.conviction}`)].join('\n');
+            const ts = new Date().toISOString().slice(0,10);
+            download(csv, `xa_ideas_${op.id}_${ts}.csv`);
+            window.XALog.write('export', { format:'idea_csv', operator:op.id, stockCount:opRows.length });
+          }} disabled={opRows.length===0}
+            style={{padding:'6px 14px',fontSize:10,fontFamily:'var(--mono)',fontWeight:600,borderRadius:4,cursor:opRows.length?'pointer':'not-allowed',
+              border:'1px solid var(--border)',background:opRows.length?'var(--bg2)':'var(--bg)',color:opRows.length?'var(--fg)':'var(--fg4)',transition:'opacity .15s',opacity:opRows.length?1:0.4}}
+            onMouseEnter={e=>{if(opRows.length)e.target.style.opacity=0.8}} onMouseLeave={e=>e.target.style.opacity=opRows.length?1:0.4}>
+            {op.icon} {op.name} ({opRows.length})
+          </button>;
+        })}
+        {scoped.length > 1 && <button onClick={() => {
+          const td = document.getElementById('xa-idea-date')?.value || new Date().toISOString().slice(0,10);
+          const ts = new Date().toISOString().slice(0,10);
+          let delay = 0;
+          scoped.forEach(op => {
+            const opRows = [];
+            op.stocks.forEach(s => {
+              const eng = runEngine(s, op.macroMap, masterMacros);
+              const pt = getConvictionPT(s, eng);
+              const targetPx = s.verdict === 'long' ? pt.bullPT : pt.bearPT;
+              if (targetPx == null) return;
+              const b = toBBG(s.ticker);
+              opRows.push({ bbg: b.bbg, ccy: b.ccy, target: targetPx, conviction: CONV_NUM[pt.conviction] || 4 });
+            });
+            if (opRows.length === 0) return;
+            const header = 'bbg_ticker,currency,target_price,target_date,conviction';
+            const csv = [header, ...opRows.map(r => `${r.bbg},${r.ccy},${r.target},${td},${r.conviction}`)].join('\n');
+            setTimeout(() => download(csv, `xa_ideas_${op.id}_${ts}.csv`), delay);
+            delay += 300;
+          });
+          window.XALog.write('export', { format:'idea_csv_all', operatorCount:scoped.length });
+        }}
+          style={{padding:'6px 14px',fontSize:10,fontFamily:'var(--mono)',fontWeight:700,borderRadius:4,cursor:'pointer',
+            border:'none',background:'var(--y)',color:'#000',transition:'opacity .15s'}}
+          onMouseEnter={e=>e.target.style.opacity=0.85} onMouseLeave={e=>e.target.style.opacity=1}>
+          ↓ Download All ({scoped.length} files)
+        </button>}
+      </div>
+    </div>
 
     <div style={{background:'var(--bg1)',borderRadius:8,border:'1px solid var(--border)',padding:16,marginBottom:20}}>
       <div style={{fontSize:10,fontFamily:'var(--mono)',fontWeight:700,color:'var(--fg3)',marginBottom:10,textTransform:'uppercase',letterSpacing:'.1em'}}>Conviction → Price Target Logic</div>
